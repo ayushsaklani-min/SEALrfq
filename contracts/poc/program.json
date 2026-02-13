@@ -1,0 +1,6 @@
+{
+    "program": "sealrfq_poc.aleo",
+    "version": "0.0.0",
+    "description": "SealRFQ Phase 0 Proof of Concept - Privacy-first RFQ with commit-reveal bids",
+    "license": "MIT"
+}
