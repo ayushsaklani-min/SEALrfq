@@ -45,7 +45,8 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
             try {
                 const response = await authenticatedFetch(`/api/bid/${bidId}`);
                 if (!response.ok) {
-                    throw new Error('Failed to fetch bid');
+                    const err = await response.json().catch(() => null);
+                    throw new Error(err?.error?.message || 'Failed to fetch bid');
                 }
                 const data = await response.json();
                 setBid(data.data);
