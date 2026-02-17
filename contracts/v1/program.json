@@ -1,0 +1,6 @@
+{
+    "program": "sealrfq_v1.aleo",
+    "version": "1.0.0",
+    "description": "SealRFQ V1 - Production-hardened RFQ contract with privacy, escrow, and anti-griefing",
+    "license": "MIT"
+}

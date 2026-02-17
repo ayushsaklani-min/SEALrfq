@@ -1,32 +1,30 @@
+# Dependencies / build artifacts
+**/node_modules/
+**/.next/
+**/dist/
+**/coverage/
+**/.turbo/
+**/*.tsbuildinfo
+
 # Leo build artifacts
 build/
 *.avm
 *.prover
 *.verifier
-
-# Environment files
-.env
-*.key
-*.keys
-
-# Leo package files
 .leo/
 leo.lock
 
-# OS files
-.DS_Store
-Thumbs.db
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env*.example
+*.key
+*.keys
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Node modules (for future backend)
-node_modules/
-dist/
-.next/
+# Local databases
+backend/db/*.db
+backend/db/*.db-*
 
 # Logs
 *.log
@@ -34,6 +32,17 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Temporary files
+# Temp files
 *.tmp
 *.temp
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Deployment metadata
+.vercel/
