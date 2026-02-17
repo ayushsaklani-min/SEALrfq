@@ -332,7 +332,7 @@ export async function handleGetBid(
     request: NextRequest,
     bidId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['VENDOR', 'BUYER', 'AUDITOR']);
+    const authResult = await requireRole(request, ['VENDOR', 'BUYER', 'AUDITOR', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
