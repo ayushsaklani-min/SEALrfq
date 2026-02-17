@@ -1,5 +1,11 @@
 'use client';
 
+function clearLocalAuthState(): void {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('walletAddress');
+    localStorage.removeItem('role');
+}
+
 async function safeJson(response: Response): Promise<any | null> {
     const text = await response.text();
     if (!text) {
@@ -55,10 +61,14 @@ export async function authenticatedFetch(
 
     const refreshed = await tryRefreshAccessToken();
     if (!refreshed) {
+        clearLocalAuthState();
         return response;
     }
 
     const retryHeaders = withAccessTokenHeaders(init?.headers, refreshed);
     response = await fetch(input, { ...init, headers: retryHeaders });
+    if (response.status === 401) {
+        clearLocalAuthState();
+    }
     return response;
 }
