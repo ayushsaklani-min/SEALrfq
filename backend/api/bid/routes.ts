@@ -185,7 +185,7 @@ export async function handleRevealBid(
     request: NextRequest,
     bidId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['VENDOR']);
+    const authResult = await requireRole(request, ['VENDOR', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
