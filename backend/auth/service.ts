@@ -387,9 +387,8 @@ export class AuthService {
         const allowMockSignature =
             process.env.ALLOW_MOCK_WALLET_SIGNATURE === 'true' ||
             process.env.NODE_ENV === 'test';
-        const allowInsecureDevSignature =
-            process.env.NODE_ENV !== 'production' &&
-            process.env.ALLOW_INSECURE_WALLET_SIGNATURE !== 'false';
+        const allowInsecureSignature =
+            process.env.ALLOW_INSECURE_WALLET_SIGNATURE === 'true';
 
         if (allowMockSignature) {
             if (signature === `mock_signature_${walletAddress}_${message}`) {
@@ -398,13 +397,13 @@ export class AuthService {
 
             // When dev fallback is enabled, allow real wallet signatures even if
             // mock mode was accidentally left on.
-            if (allowInsecureDevSignature) {
+            if (allowInsecureSignature) {
                 return signature.trim().length > 0 && walletAddress.startsWith('aleo1');
             }
             return false;
         }
 
-        if (allowInsecureDevSignature) {
+        if (allowInsecureSignature) {
             return signature.trim().length > 0 && walletAddress.startsWith('aleo1');
         }
 
