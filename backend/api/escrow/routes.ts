@@ -255,50 +255,15 @@ export async function handleReleasePayment(
         }
 
         const currentBlock = await getCurrentBlockHeight();
-        const userNonce = await nextPaymentNonce(authResult.walletAddress);
         const isFinal = data.amount === remainingAmount;
 
-        let tx: AleoTransaction;
-        if (isFinal) {
-            tx = {
-                program: DEFAULT_PROGRAM_ID,
-                function: 'release_final_payment',
-                inputs: IS_POC_PROGRAM
-                    ? [rfqId, winnerBid.vendor]
-                    : [
-                          rfqId,
-                          winnerBid.vendor,
-                          `${currentBlock}u32`,
-                          `${userNonce}u64`,
-                      ],
-                fee: BigInt(1_000_000),
-            };
-        } else {
-            const percentage = Number((data.amount * BigInt(100)) / remainingAmount);
-            if (percentage <= 0 || percentage > 100) {
-                return NextResponse.json(
-                    {
-                        status: 'error',
-                        error: { code: 'INVALID_AMOUNT', message: 'Release amount results in invalid percentage' },
-                    },
-                    { status: 400 },
-                );
-            }
-            tx = {
-                program: DEFAULT_PROGRAM_ID,
-                function: 'release_partial_payment',
-                inputs: IS_POC_PROGRAM
-                    ? [rfqId, `${percentage}u8`, winnerBid.vendor]
-                    : [
-                          rfqId,
-                          `${percentage}u8`,
-                          winnerBid.vendor,
-                          `${currentBlock}u32`,
-                          `${userNonce}u64`,
-                      ],
-                fee: BigInt(1_000_000),
-            };
-        }
+        const tx: AleoTransaction = {
+            // Use native Aleo credits transfer for payout settlement.
+            program: 'credits.aleo',
+            function: 'transfer_public',
+            inputs: [winnerBid.vendor, `${data.amount}u64`],
+            fee: BigInt(1_000_000),
+        };
 
         const paymentId = `payment_${Date.now()}_${crypto.randomUUID().substring(0, 8)}`;
         const idempotencyKey = `release_payment_${paymentId}`;
