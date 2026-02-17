@@ -37,6 +37,13 @@ export default function VendorMyBidsPage() {
                     throw new Error('Unexpected non-JSON response from server. Restart frontend/backend dev servers.');
                 }
                 if (!res.ok) {
+                    if (res.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        localStorage.removeItem('walletAddress');
+                        localStorage.removeItem('role');
+                        router.push('/');
+                        return;
+                    }
                     if (res.status === 403) {
                         setForbidden(true);
                     }
