@@ -424,7 +424,7 @@ export async function handleGetRFQ(
     request: NextRequest,
     rfqId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR']);
+    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
@@ -451,7 +451,7 @@ export async function handleGetBids(
     request: NextRequest,
     rfqId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'AUDITOR']);
+    const authResult = await requireRole(request, ['BUYER', 'AUDITOR', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
