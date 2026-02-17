@@ -130,7 +130,7 @@ export async function handleCloseBidding(
     request: NextRequest,
     rfqId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER']);
+    const authResult = await requireRole(request, ['BUYER', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
