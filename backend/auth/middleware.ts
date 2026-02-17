@@ -25,17 +25,21 @@ export interface AuthenticatedRequest extends NextRequest {
 export async function requireAuth(
     request: NextRequest
 ): Promise<{ walletAddress: string; role: string; sessionId: string } | NextResponse> {
-    // Extract token from Authorization header
+    // Prefer Authorization header, fallback to accessToken cookie.
     const authHeader = request.headers.get('authorization');
+    const headerToken =
+        authHeader && authHeader.startsWith('Bearer ')
+            ? authHeader.substring(7)
+            : null;
+    const cookieToken = request.cookies.get('accessToken')?.value || null;
+    const token = headerToken || cookieToken;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (!token) {
         return NextResponse.json(
             { status: 'error', error: { code: 'AUTH_ERROR', message: 'Missing or invalid authorization header' } },
             { status: 401 }
         );
     }
-
-    const token = authHeader.substring(7);
 
     try {
         const auth = await authService.verifyAccessToken(token);
