@@ -114,6 +114,13 @@ export async function handleConnect(request: NextRequest): Promise<NextResponse>
             maxAge: 7 * 24 * 60 * 60, // 7 days
             path: '/',
         });
+        response.cookies.set('accessToken', session.accessToken, {
+            httpOnly: true,
+            secure: isProductionEnv,
+            sameSite: 'strict',
+            maxAge: 15 * 60, // 15 minutes
+            path: '/',
+        });
 
         return response;
     } catch (error: any) {
@@ -170,6 +177,13 @@ export async function handleRefresh(request: NextRequest): Promise<NextResponse>
             maxAge: 7 * 24 * 60 * 60, // 7 days
             path: '/',
         });
+        response.cookies.set('accessToken', session.accessToken, {
+            httpOnly: true,
+            secure: isProductionEnv,
+            sameSite: 'strict',
+            maxAge: 15 * 60, // 15 minutes
+            path: '/',
+        });
 
         return response;
     } catch (error: any) {
@@ -204,6 +218,7 @@ export async function handleLogout(request: NextRequest): Promise<NextResponse> 
 
         // Clear refresh token cookie
         response.cookies.delete('refreshToken');
+        response.cookies.delete('accessToken');
 
         return response;
     } catch (error: any) {
@@ -238,6 +253,7 @@ export async function handleLogoutAll(request: NextRequest): Promise<NextRespons
 
         // Clear refresh token cookie
         response.cookies.delete('refreshToken');
+        response.cookies.delete('accessToken');
 
         return response;
     } catch (error: any) {
@@ -316,6 +332,13 @@ export async function handleDevSwitchRole(request: NextRequest): Promise<NextRes
             secure: isProductionEnv,
             sameSite: 'strict',
             maxAge: 7 * 24 * 60 * 60,
+            path: '/',
+        });
+        response.cookies.set('accessToken', session.accessToken, {
+            httpOnly: true,
+            secure: isProductionEnv,
+            sameSite: 'strict',
+            maxAge: 15 * 60,
             path: '/',
         });
 
