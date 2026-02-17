@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: sealrfq-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci && npm run db:generate && npm run build
+    startCommand: npm run db:migrate && npm run start -- -p $PORT
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
