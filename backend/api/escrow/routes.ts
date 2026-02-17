@@ -62,7 +62,7 @@ export async function handleGetEscrow(
     request: NextRequest,
     rfqId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR']);
+    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
@@ -120,7 +120,7 @@ export async function handleReleasePayment(
     request: NextRequest,
     rfqId: string,
 ): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER']);
+    const authResult = await requireRole(request, ['BUYER', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
@@ -304,7 +304,7 @@ const AuditQuerySchema = z.object({
 });
 
 export async function handleGetAuditTrail(request: NextRequest): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR']);
+    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
     if (authResult instanceof NextResponse) {
         return authResult;
     }
