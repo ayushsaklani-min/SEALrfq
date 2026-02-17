@@ -29,6 +29,43 @@ function serializePayment(payment: any) {
     };
 }
 
+async function getConfirmedPaymentsForRFQ(rfqId: string) {
+    const payments = await prisma.payment.findMany({
+        where: { rfqId },
+        orderBy: { releasedAt: 'desc' },
+    });
+
+    const idempotencyKeys = payments
+        .map((payment) =>
+            payment.releasedTxId.startsWith('pending_')
+                ? payment.releasedTxId.substring('pending_'.length)
+                : null
+        )
+        .filter((k): k is string => Boolean(k));
+
+    const txRows =
+        idempotencyKeys.length > 0
+            ? await prisma.transaction.findMany({
+                  where: { idempotencyKey: { in: idempotencyKeys } },
+                  select: { idempotencyKey: true, status: true },
+              })
+            : [];
+    const txStatusByKey = new Map(txRows.map((t) => [t.idempotencyKey, t.status]));
+
+    const confirmedPayments = payments.filter((payment) => {
+        if (!payment.releasedTxId.startsWith('pending_')) return true;
+        const key = payment.releasedTxId.substring('pending_'.length);
+        return txStatusByKey.get(key) === TxStatus.CONFIRMED;
+    });
+
+    const confirmedReleasedAmount = confirmedPayments.reduce(
+        (acc, payment) => acc + payment.amount,
+        BigInt(0)
+    );
+
+    return { confirmedPayments, confirmedReleasedAmount };
+}
+
 async function nextPaymentNonce(walletAddress: string): Promise<number> {
     const confirmed = await prisma.transaction.count({
         where: {
@@ -76,10 +113,7 @@ export async function handleGetEscrow(
             );
         }
 
-        const payments = await prisma.payment.findMany({
-            where: { rfqId },
-            orderBy: { releasedAt: 'desc' },
-        });
+        const { confirmedPayments, confirmedReleasedAmount } = await getConfirmedPaymentsForRFQ(rfqId);
 
         const latestBlockIndexed = await getLatestIndexedBlock();
         const pendingTx = await prisma.transaction.count({
@@ -89,15 +123,16 @@ export async function handleGetEscrow(
             },
         });
 
-        const remainingAmount = escrow.totalAmount - escrow.releasedAmount;
+        const remainingAmount = escrow.totalAmount - confirmedReleasedAmount;
         const isReconciled = pendingTx === 0 && Math.abs(latestBlockIndexed - escrow.fundedBlock) < 5;
 
         return NextResponse.json({
             status: 'success',
             data: {
                 ...serializeEscrow(escrow),
+                releasedAmount: confirmedReleasedAmount.toString(),
                 remainingAmount: remainingAmount.toString(),
-                payments: payments.map(serializePayment),
+                payments: confirmedPayments.map(serializePayment),
                 isReconciled,
                 pendingTx,
                 milestones: [],
@@ -169,7 +204,8 @@ export async function handleReleasePayment(
             );
         }
 
-        const remainingAmount = escrow.totalAmount - escrow.releasedAmount;
+        const { confirmedReleasedAmount } = await getConfirmedPaymentsForRFQ(rfqId);
+        const remainingAmount = escrow.totalAmount - confirmedReleasedAmount;
         if (data.amount > remainingAmount) {
             return NextResponse.json(
                 {
@@ -185,6 +221,21 @@ export async function handleReleasePayment(
 
         const canonicalScope = data.milestoneId || `amount_${data.amount.toString()}`;
         const canonicalKey = `release_payment:${authResult.walletAddress}:${rfqId}:${canonicalScope}`;
+        const inFlight = await prisma.transaction.findFirst({
+            where: {
+                canonicalTxKey: { startsWith: `release_payment:${authResult.walletAddress}:${rfqId}:` },
+                status: { in: [TxStatus.PREPARED, TxStatus.SUBMITTED] },
+            },
+        });
+        if (inFlight) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: { code: 'PAYMENT_IN_PROGRESS', message: 'Another payment release is in progress' },
+                },
+                { status: 409 },
+            );
+        }
         if (data.milestoneId) {
             const existingAttempt = await prisma.transaction.findFirst({
                 where: {
@@ -253,30 +304,17 @@ export async function handleReleasePayment(
         const idempotencyKey = `release_payment_${paymentId}`;
         await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
 
-        await prisma.$transaction([
-            prisma.payment.create({
-                data: {
-                    rfqId,
-                    recipient: winnerBid.vendor,
-                    amount: data.amount,
-                    isFinal,
-                    releasedBlock: currentBlock,
-                    releasedTxId: `pending_${idempotencyKey}`,
-                    releasedEventIdx: 0,
-                },
-            }),
-            prisma.escrow.update({
-                where: { rfqId },
-                data: {
-                    releasedAmount: escrow.releasedAmount + data.amount,
-                    isFinal,
-                },
-            }),
-            prisma.rFQ.update({
-                where: { id: rfqId },
-                data: { status: isFinal ? 'COMPLETED' : 'ESCROW_FUNDED' },
-            }),
-        ]);
+        await prisma.payment.create({
+            data: {
+                rfqId,
+                recipient: winnerBid.vendor,
+                amount: data.amount,
+                isFinal,
+                releasedBlock: currentBlock,
+                releasedTxId: `pending_${idempotencyKey}`,
+                releasedEventIdx: 0,
+            },
+        });
 
         return NextResponse.json({
             status: 'success',
