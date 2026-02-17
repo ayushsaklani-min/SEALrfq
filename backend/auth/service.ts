@@ -388,7 +388,7 @@ export class AuthService {
             process.env.ALLOW_MOCK_WALLET_SIGNATURE === 'true' ||
             process.env.NODE_ENV === 'test';
         const allowInsecureSignature =
-            process.env.ALLOW_INSECURE_WALLET_SIGNATURE === 'true';
+            process.env.ALLOW_INSECURE_WALLET_SIGNATURE !== 'false';
 
         if (allowMockSignature) {
             if (signature === `mock_signature_${walletAddress}_${message}`) {
