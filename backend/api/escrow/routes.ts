@@ -330,6 +330,47 @@ export async function handleGetAuditTrail(request: NextRequest): Promise<NextRes
             take: query.limit,
         });
 
+        if (events.length === 0) {
+            const txRows = await prisma.transaction.findMany({
+                where: {
+                    status: TxStatus.CONFIRMED,
+                    ...(query.rfqId ? { canonicalTxKey: { contains: query.rfqId } } : {}),
+                },
+                orderBy: { confirmedAt: 'desc' },
+                take: query.limit,
+                select: {
+                    id: true,
+                    transition: true,
+                    txHash: true,
+                    idempotencyKey: true,
+                    blockHeight: true,
+                    confirmedAt: true,
+                    submittedAt: true,
+                    preparedAt: true,
+                    canonicalTxKey: true,
+                },
+            });
+
+            const synthesized = txRows
+                .map((tx) => ({
+                    id: `tx_${tx.id}`,
+                    eventType: transitionToEventType(tx.transition),
+                    txId: tx.txHash || tx.idempotencyKey,
+                    blockHeight: tx.blockHeight || 0,
+                    eventVersion: 1,
+                    processedAt: tx.confirmedAt || tx.submittedAt || tx.preparedAt,
+                    rfqId: inferRfqIdFromCanonicalKey(tx.canonicalTxKey),
+                    transition: tx.transition,
+                    eventData: null,
+                }))
+                .filter((event) => (query.eventType ? event.eventType === query.eventType : true));
+
+            return NextResponse.json({
+                status: 'success',
+                data: synthesized,
+            });
+        }
+
         return NextResponse.json({
             status: 'success',
             data: events.map((e) => ({
@@ -359,4 +400,24 @@ async function getLatestIndexedBlock(): Promise<number> {
     });
 
     return latest?.blockHeight || 0;
+}
+
+function transitionToEventType(transition: string): string {
+    const map: Record<string, string> = {
+        create_rfq: 'RFQ_CREATED',
+        submit_bid_commit: 'BID_COMMITTED',
+        close_bidding: 'BIDDING_CLOSED',
+        reveal_bid: 'BID_REVEALED',
+        select_winner: 'WINNER_SELECTED',
+        slash_non_revealer: 'STAKE_SLASHED',
+        fund_escrow: 'ESCROW_FUNDED',
+        release_partial_payment: 'PAYMENT_RELEASED',
+        release_final_payment: 'PAYMENT_RELEASED',
+    };
+    return map[transition] || 'UNKNOWN';
+}
+
+function inferRfqIdFromCanonicalKey(canonicalTxKey: string): string | null {
+    const fieldMatch = canonicalTxKey.match(/\d+field/);
+    return fieldMatch ? fieldMatch[0] : null;
 }

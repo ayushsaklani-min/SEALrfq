@@ -1,12 +1,27 @@
 import './globals.css';
 import { WalletProvider } from '@/contexts/WalletContext';
 import type { Metadata } from 'next';
-import { Inter, Outfit } from 'next/font/google';
+import { Chakra_Petch, IBM_Plex_Mono, Manrope } from 'next/font/google';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
-const outfit = Outfit({ subsets: ['latin'], variable: '--font-outfit' });
+const manrope = Manrope({
+  subsets: ['latin'],
+  variable: '--font-body',
+  display: 'swap',
+});
+const chakraPetch = Chakra_Petch({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-display',
+  display: 'swap',
+});
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'SealRFQ - Secure On-Chain Bidding',
@@ -20,7 +35,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${outfit.variable} font-sans bg-black text-cyan-400 min-h-screen flex flex-col`}>
+      <body
+        className={`${manrope.variable} ${chakraPetch.variable} ${ibmPlexMono.variable} font-sans bg-black text-cyan-400 min-h-screen flex flex-col`}
+      >
         <div className="neon-grid" />
         <WalletProvider>
           <Navbar />
