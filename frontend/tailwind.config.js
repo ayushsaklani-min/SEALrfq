@@ -38,9 +38,9 @@ module.exports = {
         border: 'rgba(255, 255, 255, 0.1)',
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        display: ['Outfit', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['var(--font-body)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',

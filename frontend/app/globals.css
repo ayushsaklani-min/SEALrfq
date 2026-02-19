@@ -13,6 +13,7 @@
   body {
     @apply bg-black text-cyan-400 antialiased selection:bg-cyan-500/30 selection:text-cyan-100;
     font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+    letter-spacing: 0.01em;
     background: linear-gradient(135deg, #000000 0%, #0a0a0a 50%, #000000 100%);
   }
 
@@ -22,8 +23,15 @@
   h4,
   h5,
   h6 {
-    @apply font-display tracking-tight text-cyan-400;
+    @apply font-display font-semibold tracking-wide text-cyan-400;
     text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    @apply font-mono;
   }
 }
 

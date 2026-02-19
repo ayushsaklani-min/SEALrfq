@@ -169,11 +169,19 @@ export function TxStatusView({
     };
 
     if (loading) {
-        return <div className="tx-status loading">Loading transaction status...</div>;
+        return (
+            <div className="rounded-xl border border-cyan-400/20 bg-black/50 p-4 text-sm text-cyan-200/80">
+                Loading transaction status...
+            </div>
+        );
     }
 
     if (error || !tx) {
-        return <div className="tx-status error">Error: {error || 'Transaction not found'}</div>;
+        return (
+            <div className="rounded-xl border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-300">
+                Error: {error || 'Transaction not found'}
+            </div>
+        );
     }
 
     const history: Array<{ status: TxStatus; timestamp: string }> = Array.isArray(tx.statusHistory)
@@ -187,66 +195,72 @@ export function TxStatusView({
           })();
 
     return (
-        <div className={`tx-status ${tx.status.toLowerCase()} ${compact ? 'compact' : ''}`}>
+        <div
+            className={`rounded-2xl border border-cyan-400/20 bg-black/55 shadow-[0_0_20px_rgba(34,211,238,0.16)] ${compact ? 'p-4' : 'p-5 sm:p-6'}`}
+        >
             {/* REQUIREMENT 2: Full lifecycle with timestamps + tx IDs */}
-            <div className="tx-status-header">
+            <div className="mb-4 flex flex-wrap items-center gap-3 border-b border-cyan-400/15 pb-3">
                 <StatusBadge status={tx.status} />
-                <span className="tx-transition">{tx.transition}</span>
+                <span className="rounded-md border border-cyan-400/20 bg-cyan-500/5 px-2 py-1 font-mono text-xs tracking-wide text-cyan-200">
+                    {tx.transition}
+                </span>
             </div>
 
-            <div className="tx-status-body">
+            <div className="space-y-4">
                 {/* Current state info */}
-                <div className="tx-info">
+                <div className="space-y-3">
                     {tx.txHash && (
-                        <div className="tx-hash">
-                            <strong>Tx Hash:</strong>{' '}
+                        <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3 text-sm">
+                            <span className="mb-1 block text-[11px] uppercase tracking-[0.18em] text-cyan-300/70">Tx Hash</span>
                             <a
                                 href={`https://explorer.aleo.org/transaction/${tx.txHash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                className="font-mono text-cyan-200 underline decoration-cyan-400/40 underline-offset-4 transition hover:text-cyan-100"
                             >
-                                {tx.txHash.substring(0, 16)}...
+                                {tx.txHash.substring(0, 18)}...
                             </a>
                         </div>
                     )}
 
-                    {tx.blockHeight && (
-                        <div className="tx-block">
-                            <strong>Block:</strong> {tx.blockHeight}
+                    {typeof tx.blockHeight === 'number' && tx.blockHeight > 0 && (
+                        <div className="rounded-lg border border-cyan-400/20 bg-black/35 p-3 text-sm">
+                            <span className="mb-1 block text-[11px] uppercase tracking-[0.18em] text-cyan-300/70">Block Height</span>
+                            <span className="font-mono text-cyan-100">{tx.blockHeight}</span>
                         </div>
                     )}
 
                     {/* Timestamps */}
-                    <div className="tx-timestamps">
-                        <div><strong>Prepared:</strong> {formatTimestamp(tx.preparedAt)}</div>
-                        {tx.submittedAt && <div><strong>Submitted:</strong> {formatTimestamp(tx.submittedAt)}</div>}
-                        {tx.confirmedAt && <div><strong>Confirmed:</strong> {formatTimestamp(tx.confirmedAt)}</div>}
-                        {tx.rejectedAt && <div><strong>Rejected:</strong> {formatTimestamp(tx.rejectedAt)}</div>}
-                        {tx.expiredAt && <div><strong>Expired:</strong> {formatTimestamp(tx.expiredAt)}</div>}
+                    <div className="grid gap-2 sm:grid-cols-2">
+                        <TimestampItem label="Prepared" value={tx.preparedAt} />
+                        {tx.submittedAt && <TimestampItem label="Submitted" value={tx.submittedAt} />}
+                        {tx.confirmedAt && <TimestampItem label="Confirmed" value={tx.confirmedAt} />}
+                        {tx.rejectedAt && <TimestampItem label="Rejected" value={tx.rejectedAt} />}
+                        {tx.expiredAt && <TimestampItem label="Expired" value={tx.expiredAt} />}
                     </div>
                 </div>
 
                 {/* REQUIREMENT 3: Terminal-state actions */}
                 {tx.status === 'REJECTED' && (
-                    <div className="tx-terminal-action rejected">
-                        <div className="error-details">
-                            <strong>Error:</strong> {tx.error}
-                            {tx.errorCode && <span className="error-code"> (Code: {tx.errorCode})</span>}
-                            <div className="error-class">{tx.errorClass}</div>
+                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+                        <div className="text-sm text-red-200">
+                            <span className="font-semibold text-red-100">Error:</span> {tx.error}
+                            {tx.errorCode && <span className="font-mono text-red-300"> (Code: {tx.errorCode})</span>}
+                            <div className="mt-1 text-xs uppercase tracking-wide text-red-300/80">{tx.errorClass}</div>
                         </div>
 
                         {tx.canRetry && onRetry && (
                             <button
                                 onClick={handleRetry}
                                 disabled={retrying}
-                                className="retry-btn"
+                                className="mt-3 rounded-md border border-red-300/40 bg-red-500/20 px-3 py-1.5 text-sm font-medium text-red-100 transition hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 {retrying ? 'Retrying...' : `Retry (${tx.retryCount}/${tx.maxRetries})`}
                             </button>
                         )}
 
                         {!tx.canRetry && (
-                            <div className="cannot-retry">
+                            <div className="mt-2 text-xs text-red-300/80">
                                 {tx.errorClass === 'LOGICAL'
                                     ? 'Cannot retry: contract validation error'
                                     : 'Max retries exceeded'}
@@ -256,8 +270,8 @@ export function TxStatusView({
                 )}
 
                 {tx.status === 'EXPIRED' && (
-                    <div className="tx-terminal-action expired">
-                        <div className="expired-message">
+                    <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4">
+                        <div className="text-sm text-amber-100/90">
                             Transaction expired without confirmation. You can rebuild and resubmit.
                         </div>
 
@@ -265,7 +279,7 @@ export function TxStatusView({
                             <button
                                 onClick={handleResume}
                                 disabled={retrying}
-                                className="resume-btn"
+                                className="mt-3 rounded-md border border-amber-300/40 bg-amber-500/20 px-3 py-1.5 text-sm font-medium text-amber-50 transition hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 {retrying ? 'Rebuilding...' : 'Resume / Rebuild'}
                             </button>
@@ -274,20 +288,25 @@ export function TxStatusView({
                 )}
 
                 {tx.status === 'CONFIRMED' && (
-                    <div className="tx-terminal-action confirmed">
-                        <div className="success-message">Transaction confirmed on-chain</div>
+                    <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-4">
+                        <div className="text-sm font-medium text-emerald-200">Transaction confirmed on-chain</div>
                     </div>
                 )}
 
                 {/* Status history (if requested) */}
                 {showHistory && history.length > 0 && (
-                    <div className="tx-history">
-                        <strong>History:</strong>
-                        <ul>
+                    <div className="rounded-xl border border-cyan-400/15 bg-black/35 p-4">
+                        <div className="mb-2 text-xs uppercase tracking-[0.2em] text-cyan-300/70">History</div>
+                        <ul className="space-y-2">
                             {history.map((entry, idx) => (
-                                <li key={idx}>
-                                    <span className="status-badge">{entry.status}</span>
-                                    <span className="timestamp">{formatTimestamp(entry.timestamp)}</span>
+                                <li
+                                    key={idx}
+                                    className="flex items-center justify-between rounded-md border border-cyan-400/10 bg-cyan-500/5 px-3 py-2"
+                                >
+                                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${historyBadgeTone(entry.status)}`}>
+                                        {entry.status}
+                                    </span>
+                                    <span className="font-mono text-xs text-cyan-100/85">{formatTimestamp(entry.timestamp)}</span>
                                 </li>
                             ))}
                         </ul>
@@ -304,18 +323,18 @@ export function TxStatusView({
 
 function StatusBadge({ status }: { status: TxStatus }) {
     const statusConfig = {
-        PREPARED: { label: 'Prepared', className: 'status-prepared', icon: 'P' },
-        SUBMITTED: { label: 'Submitted', className: 'status-submitted', icon: 'S' },
-        CONFIRMED: { label: 'Confirmed', className: 'status-confirmed', icon: 'C' },
-        REJECTED: { label: 'Rejected', className: 'status-rejected', icon: 'R' },
-        EXPIRED: { label: 'Expired', className: 'status-expired', icon: 'E' },
+        PREPARED: { label: 'Prepared', tone: 'bg-slate-500/20 text-slate-200 border-slate-300/30', dot: 'bg-slate-300' },
+        SUBMITTED: { label: 'Submitted', tone: 'bg-sky-500/20 text-sky-100 border-sky-300/30', dot: 'bg-sky-300' },
+        CONFIRMED: { label: 'Confirmed', tone: 'bg-emerald-500/20 text-emerald-100 border-emerald-300/30', dot: 'bg-emerald-300' },
+        REJECTED: { label: 'Rejected', tone: 'bg-red-500/20 text-red-100 border-red-300/30', dot: 'bg-red-300' },
+        EXPIRED: { label: 'Expired', tone: 'bg-amber-500/20 text-amber-100 border-amber-300/30', dot: 'bg-amber-300' },
     };
 
     const config = statusConfig[status];
 
     return (
-        <span className={`status-badge ${config.className}`}>
-            <span className="icon">{config.icon}</span>
+        <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${config.tone}`}>
+            <span className={`h-2 w-2 rounded-full ${config.dot}`} />
             {config.label}
         </span>
     );
@@ -334,4 +353,28 @@ function formatTimestamp(timestamp: string): string {
         minute: '2-digit',
         second: '2-digit',
     });
+}
+
+function TimestampItem({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-lg border border-cyan-400/15 bg-black/30 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-300/65">{label}</div>
+            <div className="mt-1 font-mono text-xs text-cyan-100/90">{formatTimestamp(value)}</div>
+        </div>
+    );
+}
+
+function historyBadgeTone(status: TxStatus): string {
+    switch (status) {
+        case 'CONFIRMED':
+            return 'border border-emerald-300/30 bg-emerald-500/20 text-emerald-100';
+        case 'REJECTED':
+            return 'border border-red-300/30 bg-red-500/20 text-red-100';
+        case 'SUBMITTED':
+            return 'border border-sky-300/30 bg-sky-500/20 text-sky-100';
+        case 'EXPIRED':
+            return 'border border-amber-300/30 bg-amber-500/20 text-amber-100';
+        default:
+            return 'border border-slate-300/30 bg-slate-500/20 text-slate-100';
+    }
 }
