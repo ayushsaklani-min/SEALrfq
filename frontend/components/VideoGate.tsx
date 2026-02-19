@@ -1,12 +1,76 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/Button";
 import { useWallet } from "@/contexts/WalletContext";
 import { ArrowRight, Wallet } from "lucide-react";
 
 export default function VideoGate() {
     const { connectWallet, connecting } = useWallet();
+    const beforeLines = useMemo(
+        () => ["Admin can see bids", "Vendors collude", "Corruption risk"],
+        []
+    );
+    const withLines = useMemo(
+        () => ["Bids hidden by ZK", "Lowest bid auto-wins", "Payment auto-escrowed", "Everyone can verify"],
+        []
+    );
+    const [typedBefore, setTypedBefore] = useState<string[]>(() => beforeLines.map(() => ""));
+    const [typedWith, setTypedWith] = useState<string[]>(() => withLines.map(() => ""));
+    const [cursor, setCursor] = useState<{ section: "before" | "with" | null; line: number }>({
+        section: null,
+        line: -1,
+    });
+
+    useEffect(() => {
+        let cancelled = false;
+        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const typeLine = async (section: "before" | "with", lineIndex: number, text: string) => {
+            if (cancelled) return;
+            setCursor({ section, line: lineIndex });
+            for (let charIndex = 1; charIndex <= text.length; charIndex += 1) {
+                if (cancelled) return;
+                const nextChunk = text.slice(0, charIndex);
+                if (section === "before") {
+                    setTypedBefore((prev) => {
+                        const next = [...prev];
+                        next[lineIndex] = nextChunk;
+                        return next;
+                    });
+                } else {
+                    setTypedWith((prev) => {
+                        const next = [...prev];
+                        next[lineIndex] = nextChunk;
+                        return next;
+                    });
+                }
+                await sleep(28);
+            }
+        };
+
+        const runTyping = async () => {
+            await sleep(1200);
+            for (let i = 0; i < beforeLines.length; i += 1) {
+                await typeLine("before", i, beforeLines[i]);
+                await sleep(220);
+            }
+            await sleep(450);
+            for (let i = 0; i < withLines.length; i += 1) {
+                await typeLine("with", i, withLines[i]);
+                await sleep(220);
+            }
+            if (!cancelled) {
+                setCursor({ section: null, line: -1 });
+            }
+        };
+
+        runTyping();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [beforeLines, withLines]);
 
     return (
         <div className="relative flex flex-col items-center justify-center min-h-screen overflow-hidden">
@@ -61,8 +125,74 @@ export default function VideoGate() {
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ duration: 0.5, delay: 1.0 }}
-                    className="flex justify-center"
+                    className="w-full max-w-4xl flex flex-col items-center gap-8"
                 >
+                    <div className="w-full bg-black/65 border border-cyan-400/70 rounded-xl p-5 md:p-6 backdrop-blur-sm shadow-[0_0_30px_rgba(34,211,238,0.2)] text-left">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <h2 className="text-base md:text-lg font-semibold text-rose-300 tracking-wide mb-3">
+                                    Before SealRFQ
+                                </h2>
+                                <ul className="space-y-2 text-sm md:text-base text-rose-100">
+                                    {beforeLines.map((line, index) => (
+                                        <li
+                                            key={line}
+                                            className="relative"
+                                        >
+                                            <span className="invisible">{`> ${line}`}</span>
+                                            <span
+                                                className={`absolute inset-0 transition-opacity duration-300 ${
+                                                    typedBefore[index] ? "opacity-100" : "opacity-0"
+                                                }`}
+                                            >
+                                                {typedBefore[index] ? `> ${typedBefore[index]}` : "\u00A0"}
+                                                {cursor.section === "before" && cursor.line === index ? (
+                                                    <motion.span
+                                                        animate={{ opacity: [1, 0, 1] }}
+                                                        transition={{ duration: 0.9, repeat: Infinity }}
+                                                        className="ml-1"
+                                                    >
+                                                        |
+                                                    </motion.span>
+                                                ) : null}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                            <div>
+                                <h2 className="text-base md:text-lg font-semibold text-emerald-300 tracking-wide mb-3">
+                                    With SealRFQ
+                                </h2>
+                                <ul className="space-y-2 text-sm md:text-base text-emerald-100">
+                                    {withLines.map((line, index) => (
+                                        <li
+                                            key={line}
+                                            className="relative"
+                                        >
+                                            <span className="invisible">{`> ${line}`}</span>
+                                            <span
+                                                className={`absolute inset-0 transition-opacity duration-300 ${
+                                                    typedWith[index] ? "opacity-100" : "opacity-0"
+                                                }`}
+                                            >
+                                                {typedWith[index] ? `> ${typedWith[index]}` : "\u00A0"}
+                                                {cursor.section === "with" && cursor.line === index ? (
+                                                    <motion.span
+                                                        animate={{ opacity: [1, 0, 1] }}
+                                                        transition={{ duration: 0.9, repeat: Infinity }}
+                                                        className="ml-1"
+                                                    >
+                                                        |
+                                                    </motion.span>
+                                                ) : null}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
                     <button
                         onClick={connectWallet}
                         disabled={connecting}
