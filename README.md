@@ -182,37 +182,6 @@ npm install && npm run dev
 
 ---
 
-## 📊 Roadmap & Milestones
-
-### **✅ Phase 0: Proof of Concept** 
-- [x] Leo smart contract with 10 transitions
-- [x] Commit-reveal bidding mechanism  
-- [x] Basic frontend with wallet integration
-- [x] Backend API with authentication
-- [x] Testnet deployment
-
-### **🚧 Phase 1: Production Ready** *(Current)*
-- [ ] Enhanced Leo contract with 46 negative tests
-- [ ] Advanced frontend with role-based UI
-- [ ] Enterprise authentication & permissions
-- [ ] Comprehensive audit trail
-- [ ] **Target**: Q2 2026
-
-### **🎯 Phase 2: Enterprise Scale** 
-- [ ] Multi-tenant SaaS platform
-- [ ] Integration APIs (SAP, Oracle, Workday)
-- [ ] Advanced analytics & reporting  
-- [ ] White-label solutions
-- [ ] **Target**: Q4 2026
-
-### **🌟 Phase 3: Global Expansion**
-- [ ] Government compliance (FedRAMP, SOC2)
-- [ ] International deployment (EU, APAC)
-- [ ] Mobile applications
-- [ ] AI-powered bid optimization
-- [ ] **Target**: 2027
-
----
 
 ## 🏆 Why SealRFQ Will Win
 
@@ -260,8 +229,6 @@ npm install && npm run dev
 
 ---
 
-## 📞 Get Involved
-
 ### **🚀 Try It Now**
 ```bash
 git clone https://github.com/sealrfq/sealrfq
@@ -273,17 +240,6 @@ cd sealrfq && npm run quick-start
 - **Twitter**: [@SealRFQ](https://twitter.com/sealrfq)  
 - **Telegram**: [t.me/sealrfq](https://t.me/sealrfq)
 
-### **🤝 Partnership Inquiries**
-- **Enterprise Sales**: enterprise@sealrfq.com
-- **Government**: gov@sealrfq.com
-- **Developers**: dev@sealrfq.com
-
-### **💼 Careers**
-We're hiring! Join us in building the future of private procurement.
-- **Senior Leo Developer** - Remote
-- **Full-Stack Engineer** - Remote  
-- **Business Development** - Global
-- **Apply**: careers@sealrfq.com
 
 ---
 
@@ -293,16 +249,14 @@ We're hiring! Join us in building the future of private procurement.
 
 **Privacy Policy**: We collect zero personal data. Your bids are cryptographically private.
 
-**Security**: Audited by [Audit Firm]. Bug bounty program active.
-
 ---
 
 <div align="center">
 
 ### **🔒 SealRFQ: Where Privacy Meets Procurement**
 
-**Built with ❤️ on Aleo**
+**Built with 💕💕 on Aleo**
 
-[**🚀 Get Started**](https://sealrfq.vercel.app) • [**📖 Docs**](https://docs.sealrfq.com) • [**💬 Discord**](https://discord.gg/sealrfq)
+[**🚀 Get Started**](https://sealrfq.vercel.app) 
 
 </div>
