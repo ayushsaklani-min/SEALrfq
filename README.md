@@ -233,14 +233,6 @@ npm install && npm run dev
 ```bash
 git clone https://github.com/sealrfq/sealrfq
 cd sealrfq && npm run quick-start
-```
-
-### **💬 Community**
-- **Discord**: [discord.gg/sealrfq](https://discord.gg/sealrfq)
-- **Twitter**: [@SealRFQ](https://twitter.com/sealrfq)  
-- **Telegram**: [t.me/sealrfq](https://t.me/sealrfq)
-
-
 ---
 
 ## 📄 License & Legal
