@@ -108,6 +108,13 @@ model RFQ {
   revealDeadline    Int         // u32
   minBid            BigInt      // u64
   status            String   @default("OPEN")
+
+  // Product details (stored off-chain; metadataHash committed on-chain)
+  itemName          String?
+  description       String?
+  quantity          String?     // stored as string to support decimals
+  unit              String?
+  metadataHash      String?     // SHA-256 hex of {itemName, description, quantity, unit}
   
   // Audit fields
   createdAt         DateTime    @default(now())
@@ -161,6 +168,7 @@ model Bid {
   createdEventIdx   Int
   
   @@unique([createdTxId, createdEventIdx])
+  @@unique([rfqId, vendor])   // One bid per vendor per RFQ
   @@index([rfqId])
   @@index([vendor])
   @@index([isRevealed])
@@ -271,7 +279,7 @@ model Transaction {
   // Transaction identification
   txHash            String?     @unique // Aleo tx hash (null until submitted)
   transition        String      // Function name
-  programId         String      @default("sealrfq_v1.aleo")
+  programId         String      @default("sealrfq_v5.aleo")
   
   // State Machine (REQUIREMENT 1: strict one-way transitions)
   status            String
@@ -330,3 +338,4 @@ model ReorgEvent {
   @@index([fromBlock])
   @@index([detectedAt])
 }
+

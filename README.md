@@ -1,254 +1,92 @@
-# 🔒 SealRFQ
-### *The Future of Private Procurement*
+# SealRFQ
 
-> **Zero-knowledge bidding. Verifiable results. Complete confidentiality.**  
-> Built on Aleo's privacy-first blockchain.
-
----
-
-## 🚨 The $2.3 Trillion Problem
-
-Every year, **$2.3 trillion** flows through global procurement systems. Yet the industry is plagued by:
-
-- **🎯 Bid Manipulation**: Competitors collude by sharing bid amounts
-- **💰 Corruption**: Insider information leads to rigged outcomes  
-- **🔍 Lack of Trust**: Vendors question if the process was fair
-- **📊 No Transparency**: Winners are selected behind closed doors
-- **⚖️ Legal Disputes**: Billions lost in procurement litigation annually
-
-**Traditional RFQ platforms expose everything.** Bids are visible to administrators, creating opportunities for manipulation and corruption.
-
----
-
-## 💡 Our Solution: Privacy-First Procurement
-
-**SealRFQ** is the world's first **zero-knowledge RFQ platform** that guarantees:
-
-### 🔐 **Complete Bid Privacy**
-- Bid amounts are **cryptographically hidden** until reveal phase
-- Even platform administrators **cannot see** your bids
-- Uses Aleo's **commit-reveal** mechanism with BHP256 hashing
-
-### ✅ **Verifiable Fairness** 
-- **Lowest bid always wins** - enforced by smart contract logic
-- All participants can **verify the selection process** on-chain
-- **Deterministic tie-breaking** rules eliminate human bias
-
-### 🛡️ **Anti-Manipulation Protection**
-- **Stake-based bidding** prevents frivolous submissions
-- **Non-revealer slashing** punishes bad actors who don't reveal
-- **Replay protection** prevents double-spending attacks
-
-### 💎 **Automated Escrow**
-- **Milestone-based payments** protect both parties
-- **Cryptographic guarantees** ensure funds are released correctly
-- **No intermediary risk** - smart contracts hold the funds
-
----
-
-## 🎯 How It Works
-
-```mermaid
-graph LR
-    A[Buyer Creates RFQ] --> B[Vendors Submit Sealed Bids]
-    B --> C[Bidding Closes]
-    C --> D[Vendors Reveal Bids]
-    D --> E[Lowest Bid Wins Automatically]
-    E --> F[Escrow Funded]
-    F --> G[Milestone Payments Released]
-```
-
-### **Phase 1: Sealed Bidding** 🔒
-- Vendors submit **cryptographic commitments** of their bids
-- Bid amounts remain **completely private**
-- **Stake required** to prevent spam (10% minimum)
-
-### **Phase 2: Reveal & Selection** 🎯  
-- Vendors reveal their actual bid amounts
-- Smart contract **automatically selects lowest bid**
-- **Verifiable on Aleo Explorer** - no trust required
-
-### **Phase 3: Automated Escrow** 💰
-- Buyer funds escrow with winning bid amount
-- **Milestone-based releases** (e.g., 40% on delivery, 60% on completion)
-- **Cryptographically guaranteed** - no disputes
-
----
-
-## 🚀 Built on Aleo: Privacy by Design
-
-### **Why Aleo?**
-- **Private by default**: Bid amounts never touch public state
-- **Verifiable computation**: Prove fairness without revealing data  
-- **Production-ready**: Leo 3.4.0 with async/await model
-- **Scalable**: Handles enterprise-grade transaction volumes
-
-### **Technical Architecture**
-```text
-🎨 Frontend (Next.js + React)
-    ↕️ Wallet Integration (Shield Wallet)
-🔧 Backend API (Node.js + Prisma)  
-    ↕️ Event Sourcing + PostgreSQL
-⛓️ Smart Contracts (Leo 3.4.0)
-    ↕️ Aleo Testnet → Mainnet
-```
-
-## 🎯 Market Opportunity
-
-### **$2.3T Global Procurement Market**
-- **Government**: $9.5T annually (World Bank)
-- **Enterprise**: $13T in B2B procurement (McKinsey)  
-- **Construction**: $10T in project bidding (Dodge Data)
-
-### **Target Customers**
-- 🏛️ **Government Agencies**: Transparent, auditable procurement
-- 🏢 **Enterprise Buyers**: Fortune 500 procurement departments
-- 🏗️ **Construction**: Large infrastructure projects
-- 💊 **Healthcare**: Medical equipment & pharmaceutical sourcing
-
-### **Competitive Advantage**
-| Traditional Platforms | SealRFQ |
-|----------------------|---------|
-| ❌ Bids visible to admins | ✅ Cryptographically private |
-| ❌ Trust-based selection | ✅ Verifiable on-chain |
-| ❌ Manual escrow process | ✅ Automated smart contracts |
-| ❌ Dispute-prone | ✅ Mathematically fair |
-
----
-
-## 🛠️ Technical Implementation
-
-### **Smart Contract Architecture**
-```leo
-// Privacy-preserving bid commitment
-async transition submit_bid_commit(
-    public rfq_id: field,
-    bid_amount: u64,           // PRIVATE 🔒
-    nonce: field,              // PRIVATE 🔒  
-    public stake: u64,
-    public bid_id: field
-) -> Future {
-    let commitment: field = BHP256::hash_to_field(bid_amount);
-    return finalize_submit_bid_commit(bid_id, commitment, rfq_id);
-}
-```
-
-### **Key Features**
-- **🔐 Commit-Reveal Scheme**: BHP256 cryptographic commitments
-- **⚡ Replay Protection**: Per-actor nonce tracking  
-- **🛡️ Input Validation**: 28 negative test cases
-- **💰 Escrow Invariants**: Mathematical guarantees on payments
-- **📊 Event Sourcing**: Complete audit trail
-
----
-
-## 🚀 Quick Start
-
-### **1. Deploy Smart Contract**
-```bash
-cd contracts/poc
-leo build
-leo deploy --network testnet
-```
+SealRFQ is a sealed-bid procurement product built on Aleo. It is designed for procurement workflows where bid confidentiality, deterministic winner selection, and controlled escrow settlement need to be enforced by protocol logic rather than by platform trust.
 
-### **2. Start Backend**
-```bash
-cd backend
-cp .env.example .env
-npm install && npm run dev
-```
+The product combines three layers:
 
-### **3. Launch Frontend**  
-```bash
-cd frontend
-cp .env.example .env.local
-npm install && npm run dev
-```
+- A privacy-preserving Leo program for bid commitment, reveal, winner selection, and escrow settlement
+- A backend that indexes and serves protocol state through authenticated APIs
+- A frontend that exposes buyer, vendor, auditor, and escrow flows through a complete wallet-driven interface
 
-**🌐 Visit**: `http://localhost:3000`
+## The Problem
 
-## 🎬 Live Demo
+Conventional procurement systems have a structural trust problem.
 
-### **🌐 Testnet Deployment**
-- **Frontend**: [sealrfq.vercel.app](https://sealrfq.vercel.app) 
-- **Backend API**: [sealrfq-api.render.com](https://sealrfq-api.render.com)
-- **Smart Contract**: `sealrfq_poc.aleo` on Aleo Testnet
-- **Explorer**: [View on Aleo Explorer](https://explorer.aleo.org)
+Before the bidding window closes, bid access usually depends on internal permissions and operational controls. In practice, that creates room for information leakage, preferential treatment, bid shopping, and disputes around whether a winner was actually selected according to the published rules.
 
-### **🎥 Demo Video**
-[![SealRFQ Demo](https://img.youtube.com/vi/DEMO_VIDEO_ID/maxresdefault.jpg)](https://youtube.com/watch?v=DEMO_VIDEO_ID)
+The payment side has a parallel problem. Even when bidding is complete, settlement still relies on off-chain coordination between buyers, vendors, finance teams, and intermediaries. That introduces delay, ambiguity, and inconsistent auditability.
 
-*Watch a complete RFQ flow: Create → Bid → Reveal → Win → Escrow*
+For high-value RFQs, the issue is not a lack of software. The issue is that the core process still depends on trusting an operator.
 
----
+## The Product
 
+SealRFQ addresses procurement as a protocol problem.
 
-## 🏆 Why SealRFQ Will Win
+Buyers create RFQs with deadlines, minimum bid requirements, and item metadata. Vendors submit sealed commitments rather than visible bid amounts. After bidding closes, vendors reveal their bids against the original commitment. Winner selection is validated against on-chain state, and settlement continues through escrow funding and payment release transitions.
 
-### **🎯 First-Mover Advantage**
-- **First** privacy-preserving RFQ platform globally
-- **Patent-pending** commit-reveal procurement process
-- **Deep Aleo integration** - can't be easily replicated
+The product currently supports:
 
-### **💰 Massive Market Opportunity**  
-- **$2.3T** addressable market with 0% privacy solutions
-- **Enterprise buyers** desperate for fair, transparent bidding
-- **Government mandates** pushing for procurement transparency
+- Buyer RFQ creation and lifecycle management
+- Vendor commit and reveal flows
+- Winner selection and explicit winner acceptance
+- Escrow funding and staged payment release
+- Auditor-facing traceability across transaction and protocol state
 
-### **🛡️ Unbreakable Privacy**
-- **Mathematical guarantees** via zero-knowledge proofs
-- **No trusted intermediaries** - pure cryptographic security
-- **Verifiable fairness** - anyone can audit the process
+## Why Aleo
 
-### **⚡ Technical Moat**
-- **Production-grade Leo contracts** with comprehensive testing
-- **Event-sourcing architecture** for enterprise scalability  
-- **Deep Aleo expertise** - 6+ months of Leo development
+SealRFQ is built on Aleo because Aleo provides privacy at the execution layer.
 
----
+In the bidding phase, the bid amount and nonce are handled as private inputs to the Leo transition. The chain stores the commitment, not the raw amount. This allows the protocol to preserve bid confidentiality during commit while still enforcing correctness during reveal and settlement.
 
-## 🤝 Join the Revolution
+Aleo is also a good fit for this product because:
 
-### **For Buyers**
-- **Eliminate bid manipulation** forever
-- **Reduce procurement costs** by 15-30%
-- **Accelerate vendor selection** with automated processes
-- **Ensure regulatory compliance** with immutable audit trails
+- The record model supports private ownership semantics
+- Leo supports ZK-aware contract design without external privacy infrastructure
+- The async transition and finalize model works well for multi-phase protocol logic
+- `credits.aleo` provides a native settlement path for stake handling and escrow release
 
-### **For Vendors**  
-- **Level playing field** - no insider advantages
-- **Faster payments** via automated escrow
-- **Reduced legal disputes** with verifiable selection
-- **Global market access** without geographic barriers
+## How SealRFQ Handles the Flow
 
-### **For Developers**
-- **Contribute** to the future of private commerce
-- **Learn** cutting-edge zero-knowledge development
-- **Build** on Aleo's privacy-first blockchain
-- **Shape** the next generation of procurement tools
+SealRFQ operates across three protocol phases:
 
----
+1. Commit
+   Buyers publish an RFQ. Vendors submit a commitment hash and flat stake.
+2. Reveal
+   Vendors reveal the original bid amount and nonce. The contract verifies that the reveal matches the commitment.
+3. Settle
+   The winner is selected against on-chain state, the winner accepts, the buyer funds escrow, and payments are released through contract transitions.
 
-### **🚀 Try It Now**
-```bash
-git clone https://github.com/sealrfq/sealrfq
-cd sealrfq && npm run quick-start
----
+This structure keeps the sensitive part of the auction private during bidding, while making the state transitions and settlement logic observable and verifiable.
 
-## 📄 License & Legal
+## What the Product Provides Today
 
-**MIT License** - Open source and free to use.
+The current product includes a complete user-facing flow from RFQ creation through payment release, backed by a contract with commit, reveal, selection, escrow, refund, slashing, and timeout recovery paths.
 
-**Privacy Policy**: We collect zero personal data. Your bids are cryptographically private.
+At the repository level, the product includes:
 
----
+- A frontend application for buyer, vendor, auditor, and escrow workflows
+- A backend application for authentication, API access, state materialization, and transaction tracking
+- Leo programs for both demo-oriented and production-oriented timing profiles
+- Wallet-driven transaction orchestration and backend transaction status surfaces
+- Audit-oriented state exposure through RFQ, bid, escrow, and transaction routes
 
-<div align="center">
+## What Has Been Achieved
 
-### **🔒 SealRFQ: Where Privacy Meets Procurement**
+The project has already reached the following milestones:
 
-**Built with 💕💕 on Aleo**
+- A full RFQ contract lifecycle on Aleo testnet
+- Separate Leo contract variants for short demo windows and production-oriented timing windows
+- Complete frontend flow from create, commit, reveal, winner selection, escrow funding, and release
+- Backend support for nonce-based authentication, session rotation, transaction tracking, reconciliation, and rate limiting
+- Coverage of normal lifecycle transitions as well as timeout and recovery paths in the contract design
 
-[**🚀 Get Started**](https://sealrfq.vercel.app) 
+## Repository Documentation
 
-</div>
+Detailed implementation documentation is organized under [`documentation/`](./documentation):
+
+- [`documentation/README.md`](./documentation/README.md)
+- [`documentation/frontend.md`](./documentation/frontend.md)
+- [`documentation/backend.md`](./documentation/backend.md)
+- [`documentation/program.md`](./documentation/program.md)
+
+These documents describe the frontend, backend, and Leo program separately, with source references to the relevant parts of the repository.

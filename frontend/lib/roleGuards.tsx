@@ -94,8 +94,9 @@ export function canPerformAction(
 ): { allowed: boolean; reason?: string } {
     const actionRules: Record<string, UserRole[]> = {
         'create_rfq': ['BUYER', 'NEW_USER'],
-        'close_bidding': ['BUYER'],
-        'select_winner': ['BUYER'],
+        'close_bidding': ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER'],
+        'select_winner': ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER'],
+        'cancel_rfq': ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER'],
         'fund_escrow': ['BUYER'],
         'release_payment': ['BUYER'],
 

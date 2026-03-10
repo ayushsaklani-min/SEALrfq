@@ -1,6 +1,7 @@
 import { handleReleasePayment } from '@/api/escrow/routes';
+import { withRateLimit } from '@/middleware/withRateLimit';
 import { NextRequest } from 'next/server';
 
-export async function POST(request: NextRequest, { params }: { params: { rfqId: string } }) {
-    return handleReleasePayment(request, params.rfqId);
-}
+export const POST = withRateLimit(async (request: NextRequest, ctx?: any) => {
+    return handleReleasePayment(request, ctx?.params?.rfqId);
+});

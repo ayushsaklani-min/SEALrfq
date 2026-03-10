@@ -11,7 +11,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { TxStatus, ErrorClass } from '../db/enums';
-import type { AleoTransaction } from '../../contracts/v1/client/result-types';
+import type { AleoTransaction } from '../lib/types';
 
 // ============================================================================
 // State Machine
@@ -55,31 +55,34 @@ export class TransactionTracker {
         idempotencyKey: string,
         expiresInMs: number = 300000 // 5 minutes default
     ): Promise<string> {
-        // Check if already exists
-        const existing = await this.prisma.transaction.findUnique({
-            where: { idempotencyKey },
-        });
-
-        if (existing) {
-            return existing.id;
+        // Atomic create: if a concurrent request already inserted the same
+        // idempotencyKey, the unique constraint raises P2002 and we fall back
+        // to a read.  This eliminates the check-then-create race condition.
+        try {
+            const tx = await this.prisma.transaction.create({
+                data: {
+                    idempotencyKey,
+                    canonicalTxKey,
+                    transition: transaction.function,
+                    programId: transaction.program,
+                    status: TxStatus.PREPARED,
+                    statusHistory: JSON.stringify([
+                        { status: TxStatus.PREPARED, timestamp: new Date().toISOString() },
+                    ]),
+                    expiresAt: new Date(Date.now() + expiresInMs),
+                },
+            });
+            return tx.id;
+        } catch (error: any) {
+            // P2002 = Prisma unique constraint violation
+            if (error?.code === 'P2002') {
+                const existing = await this.prisma.transaction.findUnique({
+                    where: { idempotencyKey },
+                });
+                if (existing) return existing.id;
+            }
+            throw error;
         }
-
-        // Create in PREPARED state
-        const tx = await this.prisma.transaction.create({
-            data: {
-                idempotencyKey,
-                canonicalTxKey,
-                transition: transaction.function,
-                programId: transaction.program,
-                status: TxStatus.PREPARED,
-                statusHistory: JSON.stringify([
-                    { status: TxStatus.PREPARED, timestamp: new Date().toISOString() },
-                ]),
-                expiresAt: new Date(Date.now() + expiresInMs),
-            },
-        });
-
-        return tx.id;
     }
 
     /**

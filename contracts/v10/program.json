@@ -1,0 +1,16 @@
+{
+    "program":  "sealrfq_v10.aleo",
+    "version":  "1.0.0",
+    "description":  "SealRFQ V10 - Production testnet deployment with market-ready timeout parameters (1-4 hour windows)",
+    "license":  "MIT",
+    "leo":  "3.4.0",
+    "dependencies":  [
+                         {
+                             "name":  "credits.aleo",
+                             "location":  "network",
+                             "path":  null,
+                             "edition":  null
+                         }
+                     ],
+    "dev_dependencies":  null
+}

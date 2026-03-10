@@ -11,6 +11,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { authenticatedFetch } from '@/lib/authFetch';
 
 type TxStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'REJECTED' | 'EXPIRED';
 type ErrorClass = 'NETWORK' | 'VALIDATION' | 'LOGICAL' | 'INFRASTRUCTURE' | 'UNKNOWN';
@@ -93,25 +94,22 @@ export function TxStatusView({
 
         const fetchStatus = async () => {
             try {
-                const response = await fetch(`/api/tx/${idempotencyKey}`, {
-                    headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
-                    },
-                });
+                const response = await authenticatedFetch(`/api/tx/${idempotencyKey}`);
+                const payload = await response.json();
 
                 if (!response.ok) {
-                    throw new Error('Failed to fetch transaction status');
+                    throw new Error(payload?.error?.message || 'Failed to fetch transaction status');
                 }
 
-                const data = await response.json();
-                setTx(data.data);
+                setTx(payload.data);
+                setError(null);
                 setLoading(false);
 
                 // Stop polling if terminal state
                 if (
-                    data.data.status === 'CONFIRMED' ||
-                    data.data.status === 'REJECTED' ||
-                    data.data.status === 'EXPIRED'
+                    payload.data.status === 'CONFIRMED' ||
+                    payload.data.status === 'REJECTED' ||
+                    payload.data.status === 'EXPIRED'
                 ) {
                     if (intervalId) {
                         clearInterval(intervalId);
@@ -212,14 +210,18 @@ export function TxStatusView({
                     {tx.txHash && (
                         <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3 text-sm">
                             <span className="mb-1 block text-[11px] uppercase tracking-[0.18em] text-cyan-300/70">Tx Hash</span>
-                            <a
-                                href={`https://explorer.aleo.org/transaction/${tx.txHash}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-mono text-cyan-200 underline decoration-cyan-400/40 underline-offset-4 transition hover:text-cyan-100"
-                            >
-                                {tx.txHash.substring(0, 18)}...
-                            </a>
+                            {tx.txHash.startsWith('at1') ? (
+                                <a
+                                    href={`https://explorer.aleo.org/transaction/${tx.txHash}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-cyan-200 underline decoration-cyan-400/40 underline-offset-4 transition hover:text-cyan-100"
+                                >
+                                    {tx.txHash.substring(0, 18)}...
+                                </a>
+                            ) : (
+                                <span className="font-mono text-cyan-100">{tx.txHash}</span>
+                            )}
                         </div>
                     )}
 

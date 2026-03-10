@@ -19,7 +19,7 @@ import type {
     EscrowFundedEvent,
     PaymentReleasedEvent,
     ContractEvent,
-} from '../../contracts/v1/client/events';
+} from '../lib/types';
 
 // ============================================================================
 // Event Processor
@@ -379,6 +379,98 @@ export class EventProcessor {
             },
         });
 
+        // Rollback business state for all records created/updated in the
+        // rolled-back window (blockHeight > toBlock).
+        await this.prisma.$transaction(async (tx) => {
+            // 1. Remove payments released in rolled-back blocks.
+            const rolledPayments = await tx.payment.findMany({
+                where: { releasedBlock: { gt: toBlock } },
+                select: { rfqId: true, amount: true, isFinal: true },
+            });
+            if (rolledPayments.length > 0) {
+                await tx.payment.deleteMany({ where: { releasedBlock: { gt: toBlock } } });
+
+                // Reverse escrow released amounts per RFQ.
+                for (const p of rolledPayments) {
+                    await tx.escrow.update({
+                        where: { rfqId: p.rfqId },
+                        data: {
+                            releasedAmount: { decrement: p.amount },
+                            isFinal: false,
+                        },
+                    });
+                }
+            }
+
+            // 2. Revert RFQs whose status changed in rolled-back blocks.
+            //    We restore them to ESCROW_FUNDED if the escrow still exists,
+            //    WINNER_SELECTED if a winner bid exists, CLOSED if bids were
+            //    revealed, OPEN otherwise.
+            const affectedRFQIds = [
+                ...new Set([
+                    ...rolledPayments.map((p) => p.rfqId),
+                ]),
+            ];
+
+            // Also include RFQs whose escrow was funded in rolled-back blocks.
+            const rolledEscrows = await tx.escrow.findMany({
+                where: { fundedBlock: { gt: toBlock } },
+                select: { rfqId: true },
+            });
+            for (const e of rolledEscrows) {
+                if (!affectedRFQIds.includes(e.rfqId)) affectedRFQIds.push(e.rfqId);
+            }
+            await tx.escrow.deleteMany({ where: { fundedBlock: { gt: toBlock } } });
+
+            // Revert bid reveals in rolled-back blocks.
+            await tx.bid.updateMany({
+                where: { revealedBlock: { gt: toBlock } },
+                data: { isRevealed: false, revealedAmount: null, revealedBlock: null },
+            });
+
+            // Delete bids committed in rolled-back blocks.
+            await tx.bid.deleteMany({ where: { createdBlock: { gt: toBlock } } });
+
+            // Delete RFQs created in rolled-back blocks.
+            await tx.rFQ.deleteMany({ where: { createdBlock: { gt: toBlock } } });
+
+            // Recalculate status for surviving affected RFQs.
+            for (const rfqId of affectedRFQIds) {
+                const rfq = await tx.rFQ.findUnique({ where: { id: rfqId } });
+                if (!rfq) continue;
+
+                const hasEscrow = await tx.escrow.findUnique({ where: { rfqId } });
+                const winnerBid = await tx.bid.findFirst({ where: { rfqId, isWinner: true } });
+                const revealedBids = await tx.bid.count({ where: { rfqId, isRevealed: true } });
+                const anyBids = await tx.bid.count({ where: { rfqId } });
+
+                let newStatus: string;
+                if (hasEscrow) {
+                    newStatus = 'ESCROW_FUNDED';
+                } else if (winnerBid) {
+                    newStatus = 'WINNER_SELECTED';
+                } else if (revealedBids > 0) {
+                    newStatus = 'CLOSED';
+                } else if (anyBids > 0) {
+                    newStatus = 'OPEN';
+                } else {
+                    newStatus = 'OPEN';
+                }
+
+                if (rfq.status !== newStatus) {
+                    await tx.rFQ.update({
+                        where: { id: rfqId },
+                        data: { status: newStatus, updatedAt: new Date() },
+                    });
+                }
+            }
+
+            // 3. Delete checkpoints for rolled-back blocks.
+            await tx.indexerCheckpoint.deleteMany({
+                where: { blockHeight: { gt: toBlock } },
+            });
+        });
+
         // Update reorg event with count
         await this.prisma.reorgEvent.update({
             where: { id: reorgEvent.id },
@@ -387,8 +479,6 @@ export class EventProcessor {
                 recoveredAt: new Date(),
             },
         });
-
-        // TODO: Rollback business state changes
     }
 
     // ========================================================================

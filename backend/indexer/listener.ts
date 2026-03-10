@@ -5,7 +5,7 @@
  */
 
 import { EventProcessor } from './processor';
-import type { ContractEvent } from '../../contracts/v1/client/events';
+import type { ContractEvent } from '../lib/types';
 
 // ============================================================================
 // Aleo Event Source Interface

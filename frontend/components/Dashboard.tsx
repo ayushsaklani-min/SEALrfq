@@ -1,13 +1,19 @@
 "use client";
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import { useWallet } from '@/contexts/WalletContext';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { ArrowRight, Shield, CheckCircle, Zap, Lock, Globe, Layers } from 'lucide-react';
 
 export default function Dashboard() {
+    const router = useRouter();
+    const { role } = useWallet();
+    const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
     return (
         <div className="flex flex-col min-h-screen overflow-hidden bg-black">
             {/* Neon Grid Background */}
@@ -29,7 +35,7 @@ export default function Dashboard() {
                 >
                     <Badge variant="secondary" className="px-4 py-2 text-sm backdrop-blur-md border-cyan-400/30 text-cyan-300 animate-fade-in neon-border">
                         <span className="flex h-2 w-2 rounded-full bg-cyan-400 mr-2 animate-pulse" style={{ boxShadow: '0 0 10px rgba(34, 211, 238, 0.8)' }} />
-                        Live on Aleo Testnet
+                        {demoMode ? 'Investor Demo Build' : 'Live on Aleo Testnet'}
                     </Badge>
 
                     <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight font-display text-black text-glow" style={{ WebkitTextStroke: '2px rgba(34, 211, 238, 0.8)' }}>
@@ -43,14 +49,22 @@ export default function Dashboard() {
                     </p>
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-6 mt-12">
-                        <Link href="/buyer/create-rfq">
-                            <Button size="lg" className="w-full sm:w-auto min-w-[200px] h-14 text-lg" rightIcon={<ArrowRight className="w-5 h-5" />}>
-                                Start as Buyer
-                            </Button>
-                        </Link>
-                        <Link href="/vendor/my-bids">
+                        {role === 'VENDOR' ? (
+                            <Link href="/vendor/my-bids">
+                                <Button size="lg" className="w-full sm:w-auto min-w-[200px] h-14 text-lg" rightIcon={<ArrowRight className="w-5 h-5" />}>
+                                    Vendor Dashboard
+                                </Button>
+                            </Link>
+                        ) : (
+                            <Link href="/buyer/create-rfq">
+                                <Button size="lg" className="w-full sm:w-auto min-w-[200px] h-14 text-lg" rightIcon={<ArrowRight className="w-5 h-5" />}>
+                                    Create New RFQ
+                                </Button>
+                            </Link>
+                        )}
+                        <Link href={role === 'VENDOR' ? '/buyer/rfqs' : '/vendor/my-bids'}>
                             <Button variant="secondary" size="lg" className="w-full sm:w-auto min-w-[200px] h-14 text-lg">
-                                Join as Vendor
+                                {role === 'VENDOR' ? 'Browse as Buyer' : 'Browse as Vendor'}
                             </Button>
                         </Link>
                     </div>
@@ -62,10 +76,10 @@ export default function Dashboard() {
                         transition={{ delay: 0.4, duration: 0.8 }}
                         className="pt-16 grid grid-cols-2 md:grid-cols-4 gap-8 opacity-70"
                     >
-                        <Stat label="Total Volume" value="$2M+" />
-                        <Stat label="RFQs Created" value="500+" />
-                        <Stat label="Active Vendors" value="120+" />
-                        <Stat label="Privacy Level" value="ZK-Max" />
+                        <Stat label="Workflow" value="Commit-Reveal" />
+                        <Stat label="Settlement" value="Escrow Ready" />
+                        <Stat label="Access" value="Wallet Auth" />
+                        <Stat label="Audit" value="Verifiable" />
                     </motion.div>
                 </motion.div>
             </section>
@@ -150,9 +164,9 @@ export default function Dashboard() {
                     <p className="text-xl text-cyan-300/70 mb-10 max-w-2xl mx-auto">
                         Join the network of forward-thinking enterprises securing their supply chain on Aleo.
                     </p>
-                    <Link href="/buyer/create-rfq">
+                    <Link href={role === 'VENDOR' ? '/vendor/my-bids' : '/buyer/create-rfq'}>
                         <Button size="lg" className="h-16 px-10 text-xl bg-black border-2 border-cyan-400 text-cyan-400 hover:bg-cyan-400/10 neon-border">
-                            Launch App
+                            {role === 'VENDOR' ? 'View Open RFQs' : 'Create RFQ'}
                         </Button>
                     </Link>
                 </div>

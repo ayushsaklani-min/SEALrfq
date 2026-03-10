@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { AuthService } from '../../auth/service';
+import { AuthService, buildWalletAuthMessage } from '../../auth/service';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth } from '../../auth/middleware';
@@ -48,6 +48,12 @@ const DevSwitchRoleSchema = z.object({
     role: z.enum(['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']),
 });
 
+function clearAuthCookies(response: NextResponse): NextResponse {
+    response.cookies.delete('refreshToken');
+    response.cookies.delete('accessToken');
+    return response;
+}
+
 // ============================================================================
 // POST /api/auth/challenge
 // ============================================================================
@@ -64,7 +70,7 @@ export async function handleChallenge(request: NextRequest): Promise<NextRespons
             data: {
                 nonce: challenge.nonce,
                 expiresAt: challenge.expiresAt.toISOString(),
-                message: `Sign this nonce to authenticate: ${challenge.nonce}`,
+                message: buildWalletAuthMessage(challenge.nonce),
             },
         });
     } catch (error: any) {
@@ -205,22 +211,18 @@ export async function handleRefresh(request: NextRequest): Promise<NextResponse>
 // ============================================================================
 
 export async function handleLogout(request: NextRequest): Promise<NextResponse> {
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+        return authResult;
+    }
+
     try {
-        const body = await request.json();
-        const { sessionId } = LogoutRequestSchema.parse(body);
+        await authService.revokeSession(authResult.sessionId, authResult.walletAddress);
 
-        await authService.revokeSession(sessionId);
-
-        const response = NextResponse.json({
+        return clearAuthCookies(NextResponse.json({
             status: 'success',
             data: { message: 'Logged out successfully' },
-        });
-
-        // Clear refresh token cookie
-        response.cookies.delete('refreshToken');
-        response.cookies.delete('accessToken');
-
-        return response;
+        }));
     } catch (error: any) {
         return NextResponse.json(
             {
@@ -240,22 +242,18 @@ export async function handleLogout(request: NextRequest): Promise<NextResponse> 
 // ============================================================================
 
 export async function handleLogoutAll(request: NextRequest): Promise<NextResponse> {
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+        return authResult;
+    }
+
     try {
-        const body = await request.json();
-        const { walletAddress } = LogoutAllRequestSchema.parse(body);
+        await authService.revokeAllSessions(authResult.walletAddress);
 
-        await authService.revokeAllSessions(walletAddress);
-
-        const response = NextResponse.json({
+        return clearAuthCookies(NextResponse.json({
             status: 'success',
             data: { message: 'All sessions revoked successfully' },
-        });
-
-        // Clear refresh token cookie
-        response.cookies.delete('refreshToken');
-        response.cookies.delete('accessToken');
-
-        return response;
+        }));
     } catch (error: any) {
         return NextResponse.json(
             {
