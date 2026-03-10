@@ -9,6 +9,7 @@
 import { useState, useEffect } from 'react';
 import { TxStatusView } from './TxStatus';
 import Link from 'next/link';
+import { authenticatedFetch } from '@/lib/authFetch';
 
 type TxStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'REJECTED' | 'EXPIRED';
 
@@ -55,18 +56,14 @@ export function TxHistory({
                 if (filterTransition) params.append('transition', filterTransition);
                 params.append('limit', limit.toString());
 
-                const response = await fetch(`/api/tx/history?${params}`, {
-                    headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
-                    },
-                });
+                const response = await authenticatedFetch(`/api/tx/history?${params}`);
+                const payload = await response.json();
 
                 if (!response.ok) {
-                    throw new Error('Failed to fetch transaction history');
+                    throw new Error(payload?.error?.message || 'Failed to fetch transaction history');
                 }
 
-                const data = await response.json();
-                setTransactions(data.data);
+                setTransactions(payload.data);
                 setLoading(false);
             } catch (err: any) {
                 setError(err.message);

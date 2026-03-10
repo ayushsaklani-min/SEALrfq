@@ -25,6 +25,7 @@ leo.lock
 # Local databases
 backend/db/*.db
 backend/db/*.db-*
+backend/db/db/
 
 # Logs
 *.log
@@ -46,3 +47,9 @@ Thumbs.db
 
 # Deployment metadata
 .vercel/
+
+# Stray root-level lock file (no root package.json)
+/package-lock.json
+
+# Contract build artifacts (compiled Leo output)
+**/build/

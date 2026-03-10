@@ -2,16 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { requireRole } from '../../auth/middleware';
 import { TransactionTracker } from '../../tx/tracker';
+import { getWinnerAcceptedState } from '../../aleo/chainState';
 import { getCurrentBlockHeight } from '../../aleo/executor';
+import { estimateFee } from '../../aleo/fees';
 import { z } from 'zod';
 import crypto from 'crypto';
-import type { AleoTransaction } from '../../../contracts/v1/client/result-types';
+import type { AleoTransaction } from '../../lib/types';
 
 const prisma = new PrismaClient();
 const tracker = new TransactionTracker(prisma);
-const DEFAULT_PROGRAM_ID = process.env.ALEO_PROGRAM_ID || 'sealrfq_v1.aleo';
+const DEFAULT_PROGRAM_ID = process.env.ALEO_PROGRAM_ID || 'sealrfq_v5.aleo';
 const DEFAULT_NETWORK = process.env.ALEO_NETWORK || 'testnet';
 const IS_POC_PROGRAM = DEFAULT_PROGRAM_ID === 'sealrfq_poc.aleo';
+const DEMO_MODE = process.env.DEMO_MODE === 'true';
+const MIN_STAKE_PERCENTAGE = 10n;
+
+function computeFlatStake(minBid: bigint): bigint {
+    return (minBid * MIN_STAKE_PERCENTAGE) / 100n;
+}
 
 function serializeBid(bid: any) {
     return {
@@ -35,17 +43,21 @@ function buildWalletTxRequest(tx: AleoTransaction) {
         function: tx.function,
         inputs: tx.inputs,
         fee: tx.fee.toString(),
-        network: DEFAULT_NETWORK,
+        network: DEMO_MODE ? 'demo' : DEFAULT_NETWORK,
     };
 }
 
-async function nextUserNonce(wallet: string, action: 'commit' | 'reveal'): Promise<number> {
+async function nextUserNonce(wallet: string, action: 'commit' | 'reveal', rfqId: string): Promise<number> {
     const transition = action === 'commit' ? 'submit_bid_commit' : 'reveal_bid';
+    const canonicalPrefix =
+        action === 'commit'
+            ? `commit_bid:${wallet}:${rfqId}`
+            : `reveal_bid:${wallet}:${rfqId}:`;
     const confirmed = await prisma.transaction.count({
         where: {
             transition,
             status: 'CONFIRMED',
-            canonicalTxKey: { contains: wallet },
+            canonicalTxKey: { startsWith: canonicalPrefix },
         },
     });
     return confirmed + 1;
@@ -56,6 +68,8 @@ const CommitBidSchema = z.object({
     bidAmount: z.string().transform((s) => BigInt(s)),
     nonce: z.string().min(1),
     stake: z.string().transform((s) => BigInt(s)),
+    txHash: z.string().optional(),
+    bidId: z.string().optional(),
 });
 
 export async function handleCommitBid(request: NextRequest): Promise<NextResponse> {
@@ -101,6 +115,19 @@ export async function handleCommitBid(request: NextRequest): Promise<NextRespons
                 { status: 400 },
             );
         }
+        const expectedFlatStake = computeFlatStake(rfq.minBid);
+        if (data.stake !== expectedFlatStake) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'INVALID_AMOUNT',
+                        message: `Stake must equal the RFQ flat stake of ${expectedFlatStake.toString()}`,
+                    },
+                },
+                { status: 400 },
+            );
+        }
 
         const existingBid = await prisma.bid.findFirst({
             where: { rfqId: data.rfqId, vendor: authResult.walletAddress },
@@ -115,11 +142,39 @@ export async function handleCommitBid(request: NextRequest): Promise<NextRespons
             );
         }
 
-        const bidId = `${Date.now()}${crypto.randomInt(100, 999)}field`;
+        const bidId = data.bidId || `${Date.now()}${crypto.randomInt(100, 999)}field`;
+        const currentBlock = DEMO_MODE ? Math.floor(Date.now() / 1000) : await getCurrentBlockHeight();
+
+        if (data.txHash) {
+            // Confirm phase: wallet tx already succeeded, create business record
+            const commitmentHash = crypto
+                .createHash('sha256')
+                .update(`${data.bidAmount.toString()}:${data.nonce}`)
+                .digest('hex');
+
+            await prisma.bid.create({
+                data: {
+                    id: bidId,
+                    rfqId: data.rfqId,
+                    vendor: authResult.walletAddress,
+                    commitmentHash,
+                    stake: data.stake,
+                    createdBlock: currentBlock,
+                    createdTxId: data.txHash,
+                    createdEventIdx: 0,
+                },
+            });
+
+            return NextResponse.json({
+                status: 'success',
+                data: { bid_id: bidId, txHash: data.txHash },
+            });
+        }
+
+        // Prepare phase: validate, construct tx, track — but do NOT create bid record
         const idempotencyKey = `commit_bid_${bidId}`;
         const canonicalKey = `commit_bid:${authResult.walletAddress}:${data.rfqId}`;
-        const currentBlock = await getCurrentBlockHeight();
-        const userNonce = await nextUserNonce(authResult.walletAddress, 'commit');
+        const userNonce = await nextUserNonce(authResult.walletAddress, 'commit', data.rfqId);
 
         const tx: AleoTransaction = {
             program: DEFAULT_PROGRAM_ID,
@@ -132,30 +187,13 @@ export async function handleCommitBid(request: NextRequest): Promise<NextRespons
                       data.nonce,
                       `${data.stake}u64`,
                       bidId,
-                      `${currentBlock}u32`,
                       `${userNonce}u64`,
+                      `${rfq.minBid}u64`,
                   ],
-            fee: BigInt(1_000_000),
+            fee: estimateFee('submit_bid_commit'),
         };
 
         await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
-        const commitmentHash = crypto
-            .createHash('sha256')
-            .update(`${data.bidAmount.toString()}`)
-            .digest('hex');
-
-        await prisma.bid.create({
-            data: {
-                id: bidId,
-                rfqId: data.rfqId,
-                vendor: authResult.walletAddress,
-                commitmentHash,
-                stake: data.stake,
-                createdBlock: currentBlock,
-                createdTxId: `pending_${idempotencyKey}`,
-                createdEventIdx: 0,
-            },
-        });
 
         return NextResponse.json({
             status: 'success',
@@ -179,6 +217,7 @@ export async function handleCommitBid(request: NextRequest): Promise<NextRespons
 const RevealBidSchema = z.object({
     bidAmount: z.string().transform((s) => BigInt(s)),
     nonce: z.string().min(1),
+    txHash: z.string().optional(),
 });
 
 export async function handleRevealBid(
@@ -240,10 +279,65 @@ export async function handleRevealBid(
             );
         }
 
+        // Check reveal deadline before wasting a wallet interaction
+        if (!DEMO_MODE) {
+            const currentBlock = await getCurrentBlockHeight();
+            if (currentBlock >= rfq.revealDeadline) {
+                return NextResponse.json(
+                    {
+                        status: 'error',
+                        error: {
+                            code: 'DEADLINE_PASSED',
+                            message: `Reveal deadline has passed (deadline: block ${rfq.revealDeadline}, current: block ${currentBlock}). This RFQ can no longer accept bid reveals.`,
+                        },
+                    },
+                    { status: 400 },
+                );
+            }
+        }
+
+        // Verify the preimage: SHA256(amount || nonce) must match stored commitmentHash.
+        const expectedHash = crypto
+            .createHash('sha256')
+            .update(`${data.bidAmount.toString()}:${data.nonce}`)
+            .digest('hex');
+
+        if (expectedHash !== bid.commitmentHash) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'INVALID_PREIMAGE',
+                        message: 'Revealed amount and nonce do not match the original bid commitment',
+                    },
+                },
+                { status: 400 },
+            );
+        }
+
+        if (data.txHash) {
+            // Confirm phase: wallet tx already succeeded, update bid record
+            const currentBlock = DEMO_MODE ? Math.floor(Date.now() / 1000) : await getCurrentBlockHeight();
+            await prisma.bid.update({
+                where: { id: bidId },
+                data: {
+                    isRevealed: true,
+                    revealedAmount: data.bidAmount,
+                    revealedBlock: currentBlock,
+                    updatedAt: new Date(),
+                },
+            });
+
+            return NextResponse.json({
+                status: 'success',
+                data: { bid_id: bidId, txHash: data.txHash },
+            });
+        }
+
+        // Prepare phase: validate, construct tx, track — but do NOT update bid
         const idempotencyKey = `reveal_bid_${bidId}_${crypto.randomUUID()}`;
-        const canonicalKey = `reveal_bid:${authResult.walletAddress}:${bidId}`;
-        const currentBlock = await getCurrentBlockHeight();
-        const userNonce = await nextUserNonce(authResult.walletAddress, 'reveal');
+        const canonicalKey = `reveal_bid:${authResult.walletAddress}:${bid.rfqId}:${bidId}`;
+        const userNonce = await nextUserNonce(authResult.walletAddress, 'reveal', bid.rfqId);
         const tx: AleoTransaction = {
             program: DEFAULT_PROGRAM_ID,
             function: 'reveal_bid',
@@ -254,23 +348,12 @@ export async function handleRevealBid(
                       bidId,
                       `${data.bidAmount}u64`,
                       data.nonce,
-                      `${currentBlock}u32`,
                       `${userNonce}u64`,
                   ],
-            fee: BigInt(1_000_000),
+            fee: estimateFee('reveal_bid'),
         };
 
         await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
-
-        await prisma.bid.update({
-            where: { id: bidId },
-            data: {
-                isRevealed: true,
-                revealedAmount: data.bidAmount,
-                revealedBlock: currentBlock,
-                updatedAt: new Date(),
-            },
-        });
 
         return NextResponse.json({
             status: 'success',
@@ -309,6 +392,19 @@ export async function handleGetMyBids(request: NextRequest): Promise<NextRespons
             select: { id: true, status: true, revealDeadline: true },
         });
         const rfqById = new Map(rfqs.map((r) => [r.id, r]));
+        const winnerAcceptedByRfq = new Map<string, boolean | null>();
+
+        await Promise.all(
+            rfqs
+                .filter((rfq) => ['WINNER_SELECTED', 'ESCROW_FUNDED', 'COMPLETED'].includes(rfq.status))
+                .map(async (rfq) => {
+                    try {
+                        winnerAcceptedByRfq.set(rfq.id, await getWinnerAcceptedState(rfq.id));
+                    } catch {
+                        winnerAcceptedByRfq.set(rfq.id, null);
+                    }
+                })
+        );
 
         const enriched = bids.map((bid) => {
             const rfq = rfqById.get(bid.rfqId);
@@ -316,6 +412,10 @@ export async function handleGetMyBids(request: NextRequest): Promise<NextRespons
                 ...serializeBid(bid),
                 rfqStatus: rfq?.status ?? null,
                 revealDeadline: rfq?.revealDeadline ?? null,
+                winnerAccepted:
+                    bid.isWinner && rfq
+                        ? winnerAcceptedByRfq.get(rfq.id) ?? null
+                        : null,
             };
         });
 
@@ -364,3 +464,4 @@ export async function handleGetBid(
         );
     }
 }
+

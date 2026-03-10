@@ -11,6 +11,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as jose from 'jose';
 import crypto from 'crypto';
+import { verifyAleoWalletSignature } from './aleoVerifier';
 
 // ============================================================================
 // Types
@@ -32,6 +33,10 @@ export interface NonceChallenge {
     nonce: string;
     expiresAt: Date;
     walletAddress: string;
+}
+
+export function buildWalletAuthMessage(nonce: string): string {
+    return `Sign this nonce to authenticate: ${nonce}`;
 }
 
 // ============================================================================
@@ -106,16 +111,10 @@ export class AuthService {
             throw new Error('Invalid signature');
         }
 
-        // 3. Mark nonce as used (prevent replay)
-        await this.prisma.authNonce.update({
-            where: { id: nonceRecord.id },
-            data: { used: true },
-        });
-
-        // 4. Resolve user role (SERVER-SIDE ONLY)
+        // 3. Resolve user role (SERVER-SIDE ONLY)
         const role = await this.resolveUserRole(walletAddress);
 
-        // 5. Generate tokens
+        // 4. Generate tokens
         const sessionId = crypto.randomUUID();
         const accessToken = await this.generateAccessToken(walletAddress, role, sessionId);
         const refreshToken = await this.generateRefreshToken(walletAddress, sessionId);
@@ -123,17 +122,23 @@ export class AuthService {
         const accessTokenExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL * 1000);
         const refreshTokenExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL * 1000);
 
-        // 6. Store session
-        await this.prisma.authSession.create({
-            data: {
-                id: sessionId,
-                walletAddress,
-                role,
-                refreshToken,
-                refreshTokenExpiresAt,
-                isRevoked: false,
-            },
-        });
+        // 5. Consume nonce and store session atomically to avoid replay races.
+        await this.prisma.$transaction([
+            this.prisma.authNonce.update({
+                where: { id: nonceRecord.id },
+                data: { used: true },
+            }),
+            this.prisma.authSession.create({
+                data: {
+                    id: sessionId,
+                    walletAddress,
+                    role,
+                    refreshToken,
+                    refreshTokenExpiresAt,
+                    isRevoked: false,
+                },
+            }),
+        ]);
 
         return {
             id: sessionId,
@@ -233,7 +238,12 @@ export class AuthService {
                 where: { id: sessionId },
             });
 
-            if (!session || session.isRevoked) {
+            if (
+                !session ||
+                session.isRevoked ||
+                session.walletAddress !== walletAddress ||
+                session.refreshTokenExpiresAt < new Date()
+            ) {
                 throw new Error('Session revoked');
             }
 
@@ -246,11 +256,19 @@ export class AuthService {
     /**
      * STEP 4: Revoke session (logout)
      */
-    async revokeSession(sessionId: string): Promise<void> {
-        await this.prisma.authSession.update({
-            where: { id: sessionId },
+    async revokeSession(sessionId: string, walletAddress?: string): Promise<void> {
+        const result = await this.prisma.authSession.updateMany({
+            where: {
+                id: sessionId,
+                ...(walletAddress ? { walletAddress } : {}),
+                isRevoked: false,
+            },
             data: { isRevoked: true },
         });
+
+        if (result.count === 0) {
+            throw new Error('Session not found or already revoked');
+        }
     }
 
     /**
@@ -326,18 +344,20 @@ export class AuthService {
         }
 
         // 2. Check if buyer (created RFQ)
-        const rfqCount = await this.prisma.rFQ.count({
+        const rfqs = await this.prisma.rFQ.findMany({
             where: { buyer: walletAddress },
+            select: { createdTxId: true },
         });
-        if (rfqCount > 0) {
+        if ((await this.countConfirmedBusinessRows(rfqs.map((rfq) => rfq.createdTxId))) > 0) {
             return 'BUYER';
         }
 
         // 3. Check if vendor (submitted bid)
-        const bidCount = await this.prisma.bid.count({
+        const bids = await this.prisma.bid.findMany({
             where: { vendor: walletAddress },
+            select: { createdTxId: true },
         });
-        if (bidCount > 0) {
+        if ((await this.countConfirmedBusinessRows(bids.map((bid) => bid.createdTxId))) > 0) {
             return 'VENDOR';
         }
 
@@ -375,42 +395,49 @@ export class AuthService {
     }
 
     /**
-     * Verify Aleo wallet signature
-     * 
-     * NOTE: This is a placeholder. Real implementation needs Aleo SDK.
+     * Verify Aleo wallet signature using the real Aleo SDK verifier.
+     * Mock and insecure fallbacks have been removed — only real signatures accepted.
      */
     private async verifyAleoSignature(
         walletAddress: string,
-        message: string,
+        nonce: string,
         signature: string
     ): Promise<boolean> {
-        const allowMockSignature =
-            process.env.ALLOW_MOCK_WALLET_SIGNATURE === 'true' ||
-            process.env.NODE_ENV === 'test';
-        const allowInsecureSignature =
-            process.env.ALLOW_INSECURE_WALLET_SIGNATURE !== 'false';
+        const authMessage = buildWalletAuthMessage(nonce);
+        try {
+            return await verifyAleoWalletSignature(walletAddress, authMessage, signature);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to verify Aleo wallet signature');
+        }
+    }
 
-        if (allowMockSignature) {
-            if (signature === `mock_signature_${walletAddress}_${message}`) {
+    private async countConfirmedBusinessRows(txIds: string[]): Promise<number> {
+        if (txIds.length === 0) {
+            return 0;
+        }
+
+        const pendingKeys = txIds
+            .filter((txId) => txId.startsWith('pending_'))
+            .map((txId) => txId.substring('pending_'.length));
+        const confirmedRows =
+            pendingKeys.length > 0
+                ? await this.prisma.transaction.findMany({
+                      where: {
+                          idempotencyKey: { in: pendingKeys },
+                          status: 'CONFIRMED',
+                      },
+                      select: { idempotencyKey: true },
+                  })
+                : [];
+        const confirmedKeySet = new Set(confirmedRows.map((row) => row.idempotencyKey));
+
+        return txIds.filter((txId) => {
+            if (!txId.startsWith('pending_')) {
                 return true;
             }
-
-            // When dev fallback is enabled, allow real wallet signatures even if
-            // mock mode was accidentally left on.
-            if (allowInsecureSignature) {
-                return signature.trim().length > 0 && walletAddress.startsWith('aleo1');
-            }
-            return false;
-        }
-
-        if (allowInsecureSignature) {
-            return signature.trim().length > 0 && walletAddress.startsWith('aleo1');
-        }
-
-        // Production path: require strict integration until cryptographic verifier is wired.
-        throw new Error(
-            'Aleo signature verification requires a configured verifier. Set ALLOW_MOCK_WALLET_SIGNATURE=true only for controlled local testing.'
-        );
+            const key = txId.substring('pending_'.length);
+            return confirmedKeySet.has(key);
+        }).length;
     }
 
     /**

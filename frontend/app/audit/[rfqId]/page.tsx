@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { authenticatedFetch } from '@/lib/authFetch';
 
 type AuditEvent = {
     id: string;
@@ -18,6 +19,10 @@ function short(value?: string, n = 12): string {
     if (!value) return '-';
     if (value.length <= n) return value;
     return `${value.substring(0, n)}...`;
+}
+
+function isExplorerTx(value?: string): boolean {
+    return Boolean(value && value.startsWith('at1'));
 }
 
 function toCsv(events: AuditEvent[]): string {
@@ -49,9 +54,7 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                 if (rfqId) q.append('rfqId', rfqId);
                 if (filterEventType !== 'ALL') q.append('eventType', filterEventType);
 
-                const response = await fetch(`/api/audit/trail?${q.toString()}`, {
-                    headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
-                });
+                const response = await authenticatedFetch(`/api/audit/trail?${q.toString()}`);
 
                 const json = await response.json();
                 if (!response.ok) {
@@ -147,14 +150,18 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                                     <td className="p-3">{event.eventType}</td>
                                     <td className="p-3">{event.transition || '-'}</td>
                                     <td className="p-3">
-                                        <a
-                                            href={`https://explorer.aleo.org/transaction/${event.txId}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-primary-300 hover:text-primary-200"
-                                        >
-                                            {short(event.txId)}
-                                        </a>
+                                        {isExplorerTx(event.txId) ? (
+                                            <a
+                                                href={`https://explorer.aleo.org/transaction/${event.txId}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-primary-300 hover:text-primary-200"
+                                            >
+                                                {short(event.txId)}
+                                            </a>
+                                        ) : (
+                                            <span className="text-gray-300">{short(event.txId)}</span>
+                                        )}
                                     </td>
                                     <td className="p-3">{event.eventVersion}</td>
                                     <td className="p-3">{short(event.rfqId, 18)}</td>

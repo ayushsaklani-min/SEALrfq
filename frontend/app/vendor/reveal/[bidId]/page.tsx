@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { TxStatusView } from '@/components/TxStatus';
-import { executeAndReportTx } from '@/lib/walletTx';
+import { walletFirstTx } from '@/lib/walletTx';
 import { authenticatedFetch } from '@/lib/authFetch';
+import DeadlineCountdown from '@/components/DeadlineCountdown';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import CopyButton from '@/components/CopyButton';
 
 interface Bid {
     id: string;
@@ -38,7 +41,11 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
     const [importMessage, setImportMessage] = useState<string | null>(null);
 
     const [submitting, setSubmitting] = useState(false);
+    const [success, setSuccess] = useState(false);
+    const [deadlinePassed, setDeadlinePassed] = useState(false);
+    const onDeadline = useCallback(() => setDeadlinePassed(true), []);
     const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+    const [showConfirm, setShowConfirm] = useState(false);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -79,9 +86,16 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
         fetchData();
     }, [bidId]);
 
-    const handleReveal = async (e: React.FormEvent) => {
+    const handleRevealSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        if (submitting || deadlinePassed) return;
+        setShowConfirm(true);
+    };
+
+    const handleReveal = async () => {
         if (submitting) return;
+
+        setShowConfirm(false);
 
         if (rfq?.status !== 'CLOSED') {
             setError(`Cannot reveal bid: RFQ is in ${rfq?.status} state (expected CLOSED)`);
@@ -93,25 +107,18 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
 
         try {
             const amount = BigInt(bidAmount);
-            const response = await authenticatedFetch(`/api/bid/${bidId}/reveal`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    bidAmount: amount.toString(),
-                    nonce,
-                }),
-            });
+            const prepareBody = { bidAmount: amount.toString(), nonce };
 
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err?.error?.message || 'Reveal failed');
-            }
-
-            const result = await response.json();
-            await executeAndReportTx(result.data.tx.idempotencyKey, result.data.tx.request);
-            setIdempotencyKey(result.data.tx.idempotencyKey);
+            const result = await walletFirstTx(
+                `/api/bid/${bidId}/reveal`,
+                prepareBody,
+                (_prepareData, txHash) => ({ ...prepareBody, txHash }),
+            );
+            setIdempotencyKey(result.idempotencyKey);
+            setSuccess(true);
         } catch (err: any) {
             setError(err.message || 'Reveal failed');
+        } finally {
             setSubmitting(false);
         }
     };
@@ -148,13 +155,13 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
     if (error && !submitting) return <div className="max-w-3xl mx-auto p-8 text-red-400">Error: {error}</div>;
     if (!bid) return <div className="max-w-3xl mx-auto p-8 text-red-400">Bid not found</div>;
 
-    if (idempotencyKey) {
+    if (success && idempotencyKey) {
         return (
             <div className="max-w-3xl mx-auto py-10 px-4">
                 <h1 className="text-3xl font-bold mb-4">Revealing Bid</h1>
                 <TxStatusView idempotencyKey={idempotencyKey} showHistory={true} />
                 <div className="mt-4 glass p-4 rounded-xl border border-white/10">
-                    <p className="text-green-300 mb-3">Bid revealed successfully.</p>
+                    <p className="text-green-300 mb-3">Bid reveal transaction submitted successfully.</p>
                     <button
                         className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700"
                         onClick={() => router.push('/vendor/my-bids')}
@@ -186,23 +193,29 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
             <h1 className="text-3xl font-bold mb-6">Reveal Bid</h1>
 
             <div className="glass p-5 rounded-2xl border border-white/10 mb-5">
+                <div className="flex items-center gap-1 text-sm text-gray-300 mb-1">
+                    <strong>Bid ID:</strong><CopyButton text={bidId} />
+                </div>
+                <div className="flex items-center gap-1 text-sm text-gray-300 mb-1">
+                    <strong>RFQ ID:</strong><CopyButton text={bid.rfqId} />
+                </div>
                 <p className="text-sm text-gray-300 mb-1">
-                    <strong>Bid ID:</strong> <span className="font-mono break-all">{bidId}</span>
-                </p>
-                <p className="text-sm text-gray-300 mb-1">
-                    <strong>RFQ ID:</strong> <span className="font-mono break-all">{bid.rfqId}</span>
-                </p>
-                <p className="text-sm text-gray-300 mb-1">
-                    <strong>Commitment Hash:</strong> <span className="font-mono break-all">{bid.commitmentHash}</span>
+                    <strong>Commitment Hash:</strong> <span className="font-mono break-all text-xs">{bid.commitmentHash}</span>
                 </p>
                 <p className="text-sm text-gray-300 mb-1"><strong>Stake:</strong> {bid.stake} credits</p>
-                <p className="text-sm text-gray-300"><strong>Committed At:</strong> {bid.createdBlock}</p>
+                <p className="text-sm text-gray-300"><strong>Committed At Block:</strong> {bid.createdBlock}</p>
             </div>
 
             {rfq && (
                 <div className="glass p-5 rounded-2xl border border-white/10 mb-5">
                     <p className="text-sm text-gray-300 mb-1"><strong>RFQ Status:</strong> {rfq.status}</p>
-                    <p className="text-sm text-gray-300"><strong>Reveal Deadline:</strong> {rfq.revealDeadline}</p>
+                    <p className="text-sm text-gray-300 mb-3"><strong>Reveal Deadline:</strong> {rfq.revealDeadline}</p>
+                    <DeadlineCountdown
+                        deadlineBlock={rfq.revealDeadline}
+                        label="Reveal window closes in"
+                        passedLabel="Reveal deadline has passed — bids can no longer be revealed"
+                        onDeadlineReached={onDeadline}
+                    />
                 </div>
             )}
 
@@ -212,7 +225,7 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
                 </div>
             )}
 
-            <form onSubmit={handleReveal} className="glass p-6 rounded-2xl border border-white/10 space-y-5">
+            <form onSubmit={handleRevealSubmit} className="glass p-6 rounded-2xl border border-white/10 space-y-5">
                 {nonceRecovered && (
                     <div className="p-3 rounded-xl border border-green-500/30 bg-green-500/10 text-green-200 text-sm">
                         Recovered bid amount and nonce from local storage.
@@ -290,10 +303,14 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
 
                 <button
                     type="submit"
-                    disabled={submitting || (rfq && rfq.status !== 'CLOSED')}
+                    disabled={submitting || deadlinePassed || (rfq && rfq.status !== 'CLOSED')}
                     className="w-full p-4 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    {submitting ? 'Revealing Bid...' : 'Reveal Bid'}
+                    {submitting
+                        ? 'Revealing Bid...'
+                        : deadlinePassed
+                          ? 'Reveal Deadline Passed'
+                          : 'Reveal Bid'}
                 </button>
             </form>
 
@@ -305,6 +322,23 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
                     </p>
                 </div>
             )}
+
+            <ConfirmDialog
+                open={showConfirm}
+                title="Reveal Bid?"
+                description="This will submit your bid amount and nonce on-chain. Make sure the values exactly match your original commit — wrong values will fail the transaction."
+                details={[
+                    { label: 'Bid ID', value: bidId },
+                    { label: 'RFQ ID', value: bid.rfqId },
+                    { label: 'Bid Amount', value: bidAmount },
+                    { label: 'Nonce', value: nonce ? `${nonce.slice(0, 12)}…` : '' },
+                ]}
+                confirmLabel="Reveal Bid"
+                variant="warning"
+                loading={submitting}
+                onConfirm={handleReveal}
+                onCancel={() => setShowConfirm(false)}
+            />
         </div>
     );
 }

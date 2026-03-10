@@ -1,7 +1,19 @@
 /** @type {import('next').NextConfig} */
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:4000';
+
 const nextConfig = {
     // Bundle size optimization
     compress: true,
+
+    // Proxy /api/* to the backend so relative fetch('/api/...') works from the frontend.
+    async rewrites() {
+        return [
+            {
+                source: '/api/:path*',
+                destination: `${BACKEND_API_URL}/api/:path*`,
+            },
+        ];
+    },
 
     // Production optimizations
     swcMinify: true,

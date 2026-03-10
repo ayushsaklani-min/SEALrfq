@@ -3,11 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useWallet } from '@/contexts/WalletContext';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Wallet, LogOut, Menu, X, ChevronDown } from 'lucide-react';
+import { Wallet, LogOut, Menu, X, ArrowLeftRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function Navbar() {
@@ -15,7 +15,6 @@ export default function Navbar() {
     const [isOpen, setIsOpen] = useState(false);
     const [scrolled, setScrolled] = useState(false);
     const { walletAddress, role, connecting, switchRole, connectWallet, disconnectWallet, switchingRole } = useWallet();
-    const showRoleSwitcher = process.env.NODE_ENV !== 'production';
 
     // Handle scroll effect
     useEffect(() => {
@@ -33,11 +32,19 @@ export default function Navbar() {
 
 
 
+    const homeHref = walletAddress ? '/dashboard' : '/';
+
     const navLinks = [
-        { name: 'Home', href: '/' },
+        { name: 'Home', href: homeHref },
         ...(role === 'VENDOR'
-            ? [{ name: 'Vendor Dashboard', href: '/vendor/my-bids' }]
-            : [{ name: 'Buyer Dashboard', href: '/buyer/rfqs' }]),
+            ? [
+                { name: 'Vendor Dashboard', href: '/vendor/my-bids' },
+              ]
+            : role === 'BUYER'
+            ? [
+                { name: 'Buyer Dashboard', href: '/buyer/rfqs' },
+              ]
+            : []),
         { name: 'Escrow', href: '/escrow' },
         { name: 'Audit', href: '/audit' },
     ];
@@ -59,7 +66,7 @@ export default function Navbar() {
             )}
         >
             <div className="max-w-7xl flex flex-wrap items-center justify-between mx-auto p-4">
-                <Link href="/" className="flex items-center space-x-2 rtl:space-x-reverse group">
+                <Link href={homeHref} className="flex items-center space-x-2 rtl:space-x-reverse group">
                     <div className="relative w-10 h-10 group-hover:scale-105 transition-transform duration-300">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src="/logo.png" alt="SealRFQ Logo" className="w-full h-full object-contain drop-shadow-lg" />
@@ -70,26 +77,17 @@ export default function Navbar() {
                 </Link>
 
                 <div className="flex md:order-2 space-x-3 md:space-x-4 rtl:space-x-reverse items-center">
-                    {walletAddress && showRoleSwitcher && (
-                        <div className="relative group hidden sm:block">
-                            <select
-                                value={role || 'NEW_USER'}
-                                onChange={(e) => switchRole(e.target.value)}
-                                disabled={switchingRole}
-                                className="appearance-none bg-black border-2 border-cyan-400/30 text-cyan-400 text-xs rounded-lg px-3 py-1.5 pr-8 focus:outline-none focus:ring-1 focus:ring-cyan-400 transition-colors cursor-pointer hover:bg-cyan-400/5 hover:border-cyan-400/50"
-                                style={{
-                                    textShadow: '0 0 5px rgba(34, 211, 238, 0.5)',
-                                    boxShadow: '0 0 10px rgba(34, 211, 238, 0.2)'
-                                }}
-                                title="Dev role switcher"
-                            >
-                                <option value="BUYER" className="bg-black text-cyan-400">BUYER</option>
-                                <option value="VENDOR" className="bg-black text-cyan-400">VENDOR</option>
-                                <option value="AUDITOR" className="bg-black text-cyan-400">AUDITOR</option>
-                                <option value="NEW_USER" className="bg-black text-cyan-400">NEW_USER</option>
-                            </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-cyan-400 pointer-events-none" style={{ filter: 'drop-shadow(0 0 3px rgba(34, 211, 238, 0.5))' }} />
-                        </div>
+                    {walletAddress && role && role !== 'NEW_USER' && (
+                        <button
+                            onClick={() => switchRole(role === 'BUYER' ? 'VENDOR' : 'BUYER')}
+                            disabled={switchingRole}
+                            className="hidden sm:flex items-center gap-1.5 bg-black border border-cyan-400/30 text-cyan-400 text-xs rounded-lg px-3 py-1.5 hover:bg-cyan-400/5 hover:border-cyan-400/50 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                            style={{ textShadow: '0 0 5px rgba(34, 211, 238, 0.5)' }}
+                            title={`Switch to ${role === 'BUYER' ? 'Vendor' : 'Buyer'} mode`}
+                        >
+                            <ArrowLeftRight className="w-3 h-3" />
+                            {switchingRole ? 'Switching...' : `Switch to ${role === 'BUYER' ? 'Selling' : 'Buying'}`}
+                        </button>
                     )}
 
                     {walletAddress ? (

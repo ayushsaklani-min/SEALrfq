@@ -6,7 +6,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from 'ioredis';
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    // Reconnect with exponential backoff (max 10s between attempts).
+    retryStrategy(times: number) {
+        if (times > 10) {
+            // After 10 failed attempts stop retrying — fail open (rate limit skipped).
+            return null;
+        }
+        return Math.min(times * 200, 10_000);
+    },
+    maxRetriesPerRequest: 1,      // Don't block a request more than one retry
+    enableOfflineQueue: false,    // Reject commands immediately when disconnected
+    lazyConnect: false,
+    connectTimeout: 3000,
+});
+
+redis.on('error', (err) => {
+    // Log but do not crash the process — rate limiting fails open.
+    console.warn('[Redis] Connection error (rate limiting will be skipped):', err.message);
+});
 
 interface RateLimitConfig {
     windowMs: number;  // Time window in milliseconds

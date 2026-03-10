@@ -1,0 +1,16 @@
+{
+    "program":  "sealrfq_v9.aleo",
+    "version":  "1.0.0",
+    "description":  "SealRFQ V9 - Short-timeout recovery-path test deployment for testnet smoke coverage",
+    "license":  "MIT",
+    "leo":  "3.4.0",
+    "dependencies":  [
+                         {
+                             "name":  "credits.aleo",
+                             "location":  "network",
+                             "path":  null,
+                             "edition":  null
+                         }
+                     ],
+    "dev_dependencies":  null
+}

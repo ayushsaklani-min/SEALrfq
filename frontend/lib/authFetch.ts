@@ -1,74 +1,54 @@
 'use client';
 
-function clearLocalAuthState(): void {
-    localStorage.removeItem('accessToken');
+/**
+ * Authenticated fetch utility.
+ *
+ * Auth tokens are stored exclusively in httpOnly cookies set by the server.
+ * They are sent automatically on every same-origin request — no manual
+ * Authorization header injection needed.
+ *
+ * On 401: attempt a silent token refresh (server rotates the cookie),
+ * then retry the original request once. If the refresh also fails,
+ * clear non-sensitive UI state so the user sees the login screen.
+ */
+
+function clearLocalUiState(): void {
     localStorage.removeItem('walletAddress');
     localStorage.removeItem('role');
 }
 
-async function safeJson(response: Response): Promise<any | null> {
-    const text = await response.text();
-    if (!text) {
-        return null;
-    }
-    try {
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
-}
-
-async function tryRefreshAccessToken(): Promise<string | null> {
+async function tryRefreshAccessToken(): Promise<boolean> {
     const response = await fetch('/api/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // Empty body — server reads refresh token from httpOnly cookie.
         body: JSON.stringify({}),
     });
-
-    if (!response.ok) {
-        return null;
-    }
-
-    const payload = await safeJson(response);
-    const nextToken = payload?.data?.accessToken;
-    if (typeof nextToken !== 'string' || nextToken.length === 0) {
-        return null;
-    }
-
-    localStorage.setItem('accessToken', nextToken);
-    return nextToken;
-}
-
-function withAccessTokenHeaders(headers: HeadersInit | undefined, accessToken: string | null): Headers {
-    const out = new Headers(headers || {});
-    if (accessToken) {
-        out.set('Authorization', `Bearer ${accessToken}`);
-    }
-    return out;
+    return response.ok;
 }
 
 export async function authenticatedFetch(
     input: RequestInfo | URL,
     init?: RequestInit
 ): Promise<Response> {
-    const token = localStorage.getItem('accessToken');
-    const firstHeaders = withAccessTokenHeaders(init?.headers, token);
-    let response = await fetch(input, { ...init, headers: firstHeaders });
+    // Cookies are sent automatically for same-origin requests.
+    let response = await fetch(input, { ...init });
 
     if (response.status !== 401) {
         return response;
     }
 
+    // Access token expired — try a silent refresh (server sets new cookies).
     const refreshed = await tryRefreshAccessToken();
     if (!refreshed) {
-        clearLocalAuthState();
+        clearLocalUiState();
         return response;
     }
 
-    const retryHeaders = withAccessTokenHeaders(init?.headers, refreshed);
-    response = await fetch(input, { ...init, headers: retryHeaders });
+    // Retry original request with the new cookie.
+    response = await fetch(input, { ...init });
     if (response.status === 401) {
-        clearLocalAuthState();
+        clearLocalUiState();
     }
     return response;
 }

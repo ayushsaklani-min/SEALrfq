@@ -8,6 +8,7 @@ import { useWallet } from '@/contexts/WalletContext';
 export default function Footer() {
     const pathname = usePathname();
     const { walletAddress } = useWallet();
+    const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
 
     // Hide Footer on landing page if not connected
     if (!walletAddress && pathname === '/') {
@@ -45,17 +46,17 @@ export default function Footer() {
                     <div>
                         <h3 className="font-semibold text-gray-300 mb-4 uppercase text-xs tracking-wider">Legal</h3>
                         <ul className="space-y-2 text-sm text-gray-500">
-                            <li><a href="#" className="hover:text-primary-400 transition-colors">Privacy Policy</a></li>
-                            <li><a href="#" className="hover:text-primary-400 transition-colors">Terms of Service</a></li>
+                            <li><Link href="/privacy" className="hover:text-primary-400 transition-colors">Privacy Policy</Link></li>
+                            <li><Link href="/terms" className="hover:text-primary-400 transition-colors">Terms of Service</Link></li>
                         </ul>
                     </div>
 
                     <div>
-                        <h3 className="font-semibold text-gray-300 mb-4 uppercase text-xs tracking-wider">Connect</h3>
+                        <h3 className="font-semibold text-gray-300 mb-4 uppercase text-xs tracking-wider">Build</h3>
                         <ul className="space-y-2 text-sm text-gray-500">
-                            <li><a href="#" className="hover:text-primary-400 transition-colors">Twitter</a></li>
-                            <li><a href="#" className="hover:text-primary-400 transition-colors">Discord</a></li>
-                            <li><a href="#" className="hover:text-primary-400 transition-colors">GitHub</a></li>
+                            <li><span>Backend API on Render</span></li>
+                            <li><span>Frontend on Vercel</span></li>
+                            <li><span>{demoMode ? 'Demo mode enabled' : 'Testnet mode enabled'}</span></li>
                         </ul>
                     </div>
                 </div>
@@ -64,7 +65,7 @@ export default function Footer() {
                     <span>&copy; {new Date().getFullYear()} SealRFQ. All rights reserved.</span>
                     <div className="flex items-center gap-4 mt-4 md:mt-0">
                         <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                        <span>Systems Operational</span>
+                        <span>{demoMode ? 'Demo Systems Ready' : 'Testnet Systems Ready'}</span>
                     </div>
                 </div>
             </div>

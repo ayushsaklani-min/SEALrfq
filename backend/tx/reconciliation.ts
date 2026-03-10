@@ -199,19 +199,90 @@ export class ReconciliationJob {
     }
 
     /**
-     * Detect phantom executions (executed on chain but not in our DB)
-     * 
-     * This helps catch cases where:
-     * - Transaction was submitted directly (bypassing backend)
-     * - Database write failed after submission
+     * Detect phantom executions (executed on chain but not tracked in our DB).
+     *
+     * Covers two cases:
+     *  1. A PREPARED transaction whose canonical action was actually executed
+     *     on-chain (DB write succeeded, submission lost).
+     *  2. A transaction that was submitted directly to the chain, completely
+     *     bypassing the backend (no DB record at all).
+     *
+     * For case 1 we rely on `reconcilePrepared` (already handles it).
+     * For case 2 we scan all canonical keys known to the chain and cross-check
+     * against the Transaction table. Any on-chain hit with no matching DB row
+     * is flagged as a phantom and inserted as a CONFIRMED record so downstream
+     * business logic can react.
      */
     private async detectPhantomExecutions(report: ReconciliationReport): Promise<void> {
-        // This would require scanning recent chain events and checking if they
-        // correspond to transactions in our DB. Implementation depends on
-        // how chain events are indexed.
+        // Collect every canonical key we have tracked in the DB.
+        const tracked = await this.prisma.transaction.findMany({
+            select: { canonicalTxKey: true, txHash: true },
+        });
+        const trackedKeys = new Set(tracked.map((t) => t.canonicalTxKey));
+        const trackedHashes = new Set(
+            tracked.map((t) => t.txHash).filter((h): h is string => h !== null),
+        );
 
-        // Placeholder for now - would be implemented with event listener
-        console.log('Phantom execution detection not yet implemented');
+        // Build the set of canonical keys we want to probe.  These come from
+        // business tables (RFQ, Bid, Escrow) whose on-chain counterparts can
+        // be inferred from the stored IDs.
+        const rfqs = await this.prisma.rFQ.findMany({ select: { id: true } });
+        const bids = await this.prisma.bid.findMany({ select: { id: true, rfqId: true } });
+
+        const candidateKeys: string[] = [
+            ...rfqs.map((r) => `create_rfq:${r.id}`),
+            ...rfqs.map((r) => `close_bidding:${r.id}`),
+            ...rfqs.map((r) => `select_winner:${r.id}`),
+            ...rfqs.map((r) => `fund_escrow:${r.id}`),
+            ...rfqs.map((r) => `cancel_rfq:${r.id}`),
+            ...bids.map((b) => `submit_bid_commit:${b.rfqId}:${b.id}`),
+            ...bids.map((b) => `reveal_bid:${b.rfqId}:${b.id}`),
+        ];
+
+        for (const canonicalKey of candidateKeys) {
+            // Skip keys we already track.
+            if (trackedKeys.has(canonicalKey)) continue;
+
+            try {
+                const result = await this.chainState.wasActionExecuted(canonicalKey);
+                if (!result.executed || !result.txHash) continue;
+
+                // Skip if we already know this tx hash under a different canonical key.
+                if (trackedHashes.has(result.txHash)) continue;
+
+                // Phantom detected — insert a synthetic CONFIRMED record so the
+                // reconciler and business logic can catch up.
+                await this.prisma.transaction.create({
+                    data: {
+                        idempotencyKey: `phantom_${result.txHash}`,
+                        canonicalTxKey: canonicalKey,
+                        transition: canonicalKey.split(':')[0],
+                        programId: process.env.ALEO_PROGRAM_ID || 'sealrfq_v9.aleo',
+                        status: 'CONFIRMED',
+                        txHash: result.txHash,
+                        blockHeight: result.blockHeight ?? null,
+                        confirmedAt: new Date(),
+                        statusHistory: JSON.stringify([
+                            { status: 'CONFIRMED', timestamp: new Date().toISOString(), source: 'phantom_detection' },
+                        ]),
+                        expiresAt: new Date(Date.now() + 86400_000), // never actually expires
+                    },
+                });
+
+                report.healed++;
+                report.details.push({
+                    txId: `phantom_${result.txHash}`,
+                    txHash: result.txHash,
+                    action: 'phantom_recorded',
+                    reason: `On-chain execution found for ${canonicalKey} with no DB record`,
+                });
+            } catch (error) {
+                report.failed++;
+                console.error(`Phantom check failed for key ${canonicalKey}:`, error);
+            }
+
+            report.checked++;
+        }
     }
 }
 

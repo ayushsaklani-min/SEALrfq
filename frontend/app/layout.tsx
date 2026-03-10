@@ -1,18 +1,19 @@
 import './globals.css';
 import { WalletProvider } from '@/contexts/WalletContext';
 import type { Metadata } from 'next';
-import { Chakra_Petch, IBM_Plex_Mono, Manrope } from 'next/font/google';
+import { IBM_Plex_Mono, Inter, Sora } from 'next/font/google';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
+import WalletErrorModal from '@/components/WalletErrorModal';
 
-const manrope = Manrope({
+const inter = Inter({
   subsets: ['latin'],
   variable: '--font-body',
   display: 'swap',
 });
-const chakraPetch = Chakra_Petch({
+const sora = Sora({
   subsets: ['latin'],
-  weight: ['500', '600', '700'],
+  weight: ['400', '600', '700', '800'],
   variable: '--font-display',
   display: 'swap',
 });
@@ -36,11 +37,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${manrope.variable} ${chakraPetch.variable} ${ibmPlexMono.variable} font-sans bg-black text-cyan-400 min-h-screen flex flex-col`}
+        className={`${inter.variable} ${sora.variable} ${ibmPlexMono.variable} font-sans bg-black text-cyan-400 min-h-screen flex flex-col`}
       >
         <div className="neon-grid" />
         <WalletProvider>
           <Navbar />
+          <WalletErrorModal />
           <main className="flex-grow pt-20 relative z-10">
             {children}
           </main>
