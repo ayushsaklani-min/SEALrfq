@@ -43,9 +43,13 @@ export function buildWalletAuthMessage(nonce: string): string {
 // Configuration
 // ============================================================================
 
-const JWT_SECRET = new TextEncoder().encode(
-    process.env.JWT_SECRET || 'development-secret-change-in-production'
-);
+if (!process.env.JWT_SECRET) {
+    throw new Error(
+        '[auth/service] JWT_SECRET env var is not set. ' +
+        'Generate one with: openssl rand -hex 32'
+    );
+}
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
 const ACCESS_TOKEN_TTL = 15 * 60; // 15 minutes
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days

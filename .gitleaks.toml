@@ -1,0 +1,24 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks#configuration
+
+title = "SEALrfq Secret Scanner"
+
+[extend]
+# Use the default Gitleaks ruleset as the base
+useDefault = true
+
+[allowlist]
+description = "Safe placeholder / example values that are not real credentials"
+regexTarget = "match"
+regexes = [
+    # Placeholder password in .env.example DATABASE_URL
+    "postgresql://user:password@localhost",
+    # Generic placeholder texts used in comments / docs
+    "replace-with-a-strong-secret",
+    "your-backend\\.render\\.com",
+]
+paths = [
+    # Example env files only contain placeholders — never real secrets
+    '''\.env\.example$''',
+    '''\.env.*\.example$''',
+]
