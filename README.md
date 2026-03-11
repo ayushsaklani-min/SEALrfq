@@ -38,7 +38,7 @@ SEALrfq is a sealed-bid procurement protocol built on Aleo. Bid confidentiality,
 │   │  │          │ │ (Block   │ │  on-chain mapping state)   │   │        │
 │   │  │          │ │  Height) │ │                            │   │        │
 │   │  └──────────┘ └──────────┘ └────────────────────────────┘   │        │
-│   │                    Render (Backend Host)                      │        │
+│   │                    AWS EC2 (Backend Host)                     │        │
 │   └──────────────────────────┬───────────────────────────────────┘        │
 │                              │ Aleo RPC                                   │
 │   ┌──────────────────────────▼───────────────────────────────────┐        │
