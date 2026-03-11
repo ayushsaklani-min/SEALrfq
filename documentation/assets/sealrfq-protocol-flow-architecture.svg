@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">SEALrfq protocol flow architecture</title>
+  <desc id="desc">Buyer, Aleo chain, and vendor protocol flow for create RFQ, commit, reveal, winner selection, escrow funding, payment release, and stake settlement.</desc>
+  <style>
+    .bg { fill: #f3f3f3; }
+    .title { font: 700 34px Arial, sans-serif; fill: #101418; }
+    .panel { fill: #d9e8f1; }
+    .buyer-head { fill: #8fc3e8; stroke: #294566; stroke-width: 2; }
+    .chain-head { fill: #1f3557; stroke: #1f3557; stroke-width: 2; }
+    .vendor-head { fill: #284c78; stroke: #284c78; stroke-width: 2; }
+    .card { fill: #eaf3f8; stroke: #4a5f74; stroke-width: 2; }
+    .chain-card { fill: #e9f4fb; stroke: #5f7387; stroke-width: 2; }
+    .note { fill: #e6e3e3; stroke: #8c8c8c; stroke-width: 2; }
+    .arrow { stroke: #173454; stroke-width: 3.5; fill: none; marker-end: url(#arrow); }
+    .light-arrow { stroke: #9b9b9b; stroke-width: 2.5; fill: none; marker-end: url(#lightArrow); }
+    .milestone { fill: #c8d7e3; stroke: #5f7387; stroke-width: 2; }
+    .head-text-dark { font: 700 24px Arial, sans-serif; fill: #101418; }
+    .head-text-light { font: 700 24px Arial, sans-serif; fill: #f5f8fb; }
+    .step { font: 700 22px Arial, sans-serif; fill: #111418; }
+    .text { font: 18px Arial, sans-serif; fill: #20262d; }
+    .note-title { font: 700 18px Arial, sans-serif; fill: #20262d; }
+    .small { font: 17px Arial, sans-serif; fill: #20262d; }
+    .center { text-anchor: middle; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#173454"/>
+    </marker>
+    <marker id="lightArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9b9b9b"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="760" class="bg"/>
+  <text x="700" y="54" class="title center">SEALrfq - Protocol Flow Architecture</text>
+
+  <rect x="26" y="84" width="238" height="670" rx="4" class="panel"/>
+  <rect x="26" y="84" width="238" height="48" rx="4" class="buyer-head"/>
+  <text x="145" y="117" class="head-text-dark center">BUYER</text>
+
+  <rect x="37" y="164" width="214" height="54" rx="4" class="card"/>
+  <text x="69" y="199" class="step">1. create_rfq</text>
+
+  <rect x="37" y="264" width="214" height="54" rx="4" class="card"/>
+  <text x="69" y="299" class="step">3. action</text>
+
+  <rect x="37" y="380" width="214" height="54" rx="4" class="card"/>
+  <text x="58" y="416" class="step">5. select_winner</text>
+
+  <rect x="37" y="478" width="214" height="54" rx="4" class="card"/>
+  <text x="58" y="514" class="step">7. fund_escrow</text>
+
+  <rect x="37" y="550" width="214" height="54" rx="4" class="card"/>
+  <text x="107" y="585" class="head-text-dark center">BUYER</text>
+
+  <rect x="37" y="622" width="214" height="54" rx="4" class="card"/>
+  <text x="107" y="657" class="head-text-dark center">BUYER</text>
+
+  <rect x="562" y="84" width="280" height="670" rx="4" class="panel"/>
+  <rect x="562" y="84" width="280" height="48" rx="4" class="chain-head"/>
+  <text x="702" y="117" class="head-text-light center">ALEO CHAIN</text>
+
+  <rect x="583" y="163" width="243" height="84" rx="4" class="chain-card"/>
+  <text x="704" y="198" class="text center">RFQ is <tspan font-weight="700">OPEN</tspan>,</text>
+  <text x="704" y="227" class="step center">rfq_status = 1</text>
+
+  <rect x="583" y="270" width="243" height="84" rx="4" class="chain-card"/>
+  <text x="704" y="305" class="text center">RFQ moves to <tspan font-weight="700">REVEAL</tspan>,</text>
+  <text x="704" y="334" class="step center">rfq_status = 2</text>
+
+  <rect x="583" y="381" width="243" height="92" rx="4" class="chain-card"/>
+  <text x="704" y="417" class="text center">All claims validated against</text>
+  <text x="704" y="442" class="text center">on-chain truth - no spoofing.</text>
+  <text x="704" y="468" class="step center">rfq_status = 3</text>
+
+  <rect x="583" y="482" width="243" height="84" rx="4" class="chain-card"/>
+  <text x="704" y="518" class="text center">Funds locked in program</text>
+  <text x="704" y="544" class="text center">account, <tspan font-weight="700">rfq_status = 4</tspan></text>
+
+  <rect x="583" y="550" width="564" height="42" rx="2" class="milestone"/>
+  <text x="865" y="578" class="step center" font-size="18">Milestone-based release, Anti-dust minimum enforced</text>
+
+  <rect x="583" y="620" width="243" height="60" rx="4" class="chain-card"/>
+  <text x="704" y="646" class="step center">rfq_status = 5</text>
+  <text x="704" y="671" class="text center">(COMPLETED)</text>
+
+  <rect x="1146" y="84" width="236" height="670" rx="4" class="panel"/>
+  <rect x="1146" y="84" width="236" height="48" rx="4" class="vendor-head"/>
+  <text x="1264" y="117" class="head-text-light center">VENDOR</text>
+
+  <rect x="1146" y="164" width="225" height="54" rx="4" class="card"/>
+  <text x="1190" y="198" class="step">2. submit_bid_commit</text>
+
+  <rect x="1144" y="255" width="226" height="146" rx="6" class="note"/>
+  <text x="1153" y="278" class="note-title">INTEGRITY CHECK</text>
+  <text x="1153" y="304" class="small">hash(amount, nonce) must</text>
+  <text x="1153" y="327" class="small">match stored commitment.</text>
+  <text x="1153" y="350" class="small">No bid-switching possible.</text>
+  <text x="1153" y="384" class="small">Lowest bid tracked</text>
+  <text x="1153" y="407" class="small">automatically on-chain.</text>
+
+  <rect x="1144" y="424" width="226" height="118" rx="6" class="note"/>
+  <text x="1153" y="449" class="note-title">CONSENT GATE</text>
+  <text x="1153" y="475" class="small">Winner must explicitly accept</text>
+  <text x="1153" y="498" class="small">before buyer can lock funds.</text>
+  <text x="1153" y="521" class="small">Prevents forced commitments.</text>
+
+  <rect x="1146" y="550" width="225" height="54" rx="4" class="card"/>
+  <text x="1258" y="585" class="head-text-dark center">VENDOR</text>
+
+  <rect x="1146" y="619" width="225" height="54" rx="4" class="card"/>
+  <text x="1258" y="654" class="head-text-dark center">VENDOR</text>
+
+  <rect x="1146" y="688" width="225" height="54" rx="4" class="card"/>
+  <text x="1258" y="723" class="head-text-dark center">VENDOR</text>
+
+  <rect x="747" y="124" width="356" height="136" rx="6" class="note"/>
+  <text x="758" y="148" class="note-title">ZK PRIVACY &amp; ZK PROOF</text>
+  <text x="758" y="173" class="small">bid_amount + nonce stay in the ZK circuit.</text>
+  <text x="758" y="196" class="small">Only hash(amount, nonce) is stored on-chain.</text>
+  <text x="758" y="233" class="small">Circuit proves bid &gt;= claimed_min_bid,</text>
+  <text x="758" y="256" class="small">Finalize verifies claimed_min_bid == actual.</text>
+
+  <rect x="293" y="407" width="278" height="73" rx="6" class="note"/>
+  <text x="308" y="437" class="small">All claims validated against</text>
+  <text x="308" y="460" class="small">on-chain truth - no spoofing.</text>
+
+  <path d="M251 191 L578 191" class="arrow"/>
+  <text x="287" y="179" class="step">1. create_rfq</text>
+  <text x="283" y="211" class="text">(deadlines, min_bid,</text>
+  <text x="283" y="235" class="text">metadata_hash)</text>
+
+  <path d="M1148 191 L842 191" class="arrow"/>
+  <text x="1190" y="179" class="step">2. submit_bid_commit</text>
+  <text x="1157" y="211" class="text">(commitment, flat_stake)</text>
+
+  <path d="M251 291 L578 291" class="arrow"/>
+  <text x="286" y="279" class="step">3. close_bidding</text>
+
+  <path d="M1144 316 L842 316" class="arrow"/>
+  <text x="1126" y="304" class="step" text-anchor="end">4. reveal_bid</text>
+  <text x="1126" y="336" class="text" text-anchor="end">(bid_amount, nonce)</text>
+
+  <path d="M251 406 L578 406" class="arrow"/>
+  <text x="286" y="395" class="step">5. select_winner</text>
+  <text x="279" y="427" class="text">(bid_id, amount, address)</text>
+
+  <path d="M1144 442 L842 442" class="light-arrow"/>
+  <text x="1126" y="430" class="step" text-anchor="end">6. winner_accept</text>
+
+  <path d="M251 505 L578 505" class="arrow"/>
+  <text x="286" y="494" class="step">7. fund_escrow</text>
+  <text x="279" y="526" class="text">(exact winning amount)</text>
+
+  <path d="M251 577 L578 577" class="arrow"/>
+  <text x="279" y="566" class="step">8. release_partial_payment</text>
+  <text x="279" y="598" class="text">(percentage of remaining)</text>
+
+  <path d="M251 646 L578 646" class="arrow"/>
+  <text x="279" y="635" class="step">9. release_final_payment</text>
+
+  <path d="M1144 647 L842 647" class="arrow"/>
+  <text x="1128" y="636" class="step" text-anchor="end">10. release_winner_stake</text>
+  <text x="1128" y="668" class="text" text-anchor="end">Winner gets stake back</text>
+
+  <path d="M1144 716 L842 716" class="arrow"/>
+  <text x="1128" y="705" class="step" text-anchor="end">11. refund_stake</text>
+  <text x="1128" y="737" class="text" text-anchor="end">(non-winners reclaim)</text>
+</svg>
