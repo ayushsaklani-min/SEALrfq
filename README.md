@@ -248,34 +248,6 @@ SEALrfq/
     └── frontend.md              # Frontend architecture
 ```
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Smart Contract | Leo / Aleo (testnet) |
-| Frontend | Next.js 14, Tailwind CSS, Framer Motion |
-| Backend | Next.js API routes, Prisma ORM, SQLite |
-| Wallet | Shield Wallet (Aleo browser extension) |
-| Auth | Aleo signature challenge-response + JWT |
-| Hosting | Vercel (frontend) + Render (backend) |
-
-## Running Locally
-
-```bash
-# Backend
-cd backend
-cp .env.example .env       # Configure Aleo RPC URL and secrets
-npm install
-npx prisma migrate dev
-npm run dev                 # http://localhost:3001
-
-# Frontend
-cd frontend
-cp .env.example .env       # Set NEXT_PUBLIC_BACKEND_URL
-npm install
-npm run dev                 # http://localhost:3000
-```
-
 ## Documentation
 
 Detailed implementation docs are in [`documentation/`](./documentation):
