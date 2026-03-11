@@ -2,65 +2,7 @@
 
 SEALrfq is a sealed-bid procurement protocol built on Aleo. Bid confidentiality, deterministic winner selection, and escrow settlement are enforced by on-chain program logic — not by platform trust.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         SEALrfq — System Architecture                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌───────────────┐       ┌───────────────┐       ┌───────────────┐        │
-│   │    Buyer       │       │    Vendor      │       │    Auditor     │        │
-│   │  (Browser)     │       │  (Browser)     │       │  (Browser)     │        │
-│   └──────┬────────┘       └──────┬────────┘       └──────┬────────┘        │
-│          │                       │                       │                  │
-│          │    Shield Wallet      │    Shield Wallet      │                  │
-│          │   (Aleo Extension)    │   (Aleo Extension)    │                  │
-│          │                       │                       │                  │
-│   ┌──────▼───────────────────────▼───────────────────────▼────────┐        │
-│   │                     Next.js Frontend                          │        │
-│   │  ┌────────────┐ ┌────────────┐ ┌─────────┐ ┌──────────────┐  │        │
-│   │  │ Create RFQ │ │ Commit Bid │ │ Reveal  │ │ Escrow Mgmt  │  │        │
-│   │  │ Close Bid  │ │ Accept Win │ │ Bid     │ │ Release Pay  │  │        │
-│   │  │ Select Win │ │ Decline    │ │         │ │ Audit View   │  │        │
-│   │  └────────────┘ └────────────┘ └─────────┘ └──────────────┘  │        │
-│   │                    Vercel (Frontend Host)                     │        │
-│   └──────────────────────────┬───────────────────────────────────┘        │
-│                              │ HTTPS / JWT Auth                           │
-│   ┌──────────────────────────▼───────────────────────────────────┐        │
-│   │                     Next.js Backend                           │        │
-│   │  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌──────────────┐  │        │
-│   │  │ Auth     │ │ RFQ API  │ │ Bid API    │ │ Escrow API   │  │        │
-│   │  │ (Aleo    │ │ CRUD +   │ │ Commit +   │ │ Fund +       │  │        │
-│   │  │  Sig)    │ │ Lifecycle│ │ Reveal     │ │ Release      │  │        │
-│   │  └──────────┘ └──────────┘ └────────────┘ └──────────────┘  │        │
-│   │  ┌──────────┐ ┌──────────┐ ┌────────────────────────────┐   │        │
-│   │  │ TX       │ │ Chain    │ │ Event Indexer              │   │        │
-│   │  │ Tracker  │ │ State    │ │ (Polls Aleo RPC for        │   │        │
-│   │  │          │ │ (Block   │ │  on-chain mapping state)   │   │        │
-│   │  │          │ │  Height) │ │                            │   │        │
-│   │  └──────────┘ └──────────┘ └────────────────────────────┘   │        │
-│   │                    AWS EC2 (Backend Host)                     │        │
-│   └──────────────────────────┬───────────────────────────────────┘        │
-│                              │ Aleo RPC                                   │
-│   ┌──────────────────────────▼───────────────────────────────────┐        │
-│   │                   Aleo Blockchain (Testnet)                   │        │
-│   │                                                               │        │
-│   │   sealrfq_v9.aleo — 22 Transitions                           │        │
-│   │   ┌─────────────────────────────────────────────────────┐    │        │
-│   │   │ Mappings: rfq_status, bid_commitments, revealed_bids│    │        │
-│   │   │           escrow_amounts, bid_stakes, winner_bids   │    │        │
-│   │   │           actor_*_nonces (replay protection)        │    │        │
-│   │   │                                                     │    │        │
-│   │   │ Records:  RFQCreated, BidCommitted, BidRevealed     │    │        │
-│   │   │           WinnerSelected, EscrowFunded              │    │        │
-│   │   │           PartialPaymentReleased, StakeSlashed ...  │    │        │
-│   │   └─────────────────────────────────────────────────────┘    │        │
-│   │                                                               │        │
-│   │   credits.aleo — Native ALEO token transfers                  │        │
-│   │   (transfer_public / transfer_public_as_signer)               │        │
-│   └───────────────────────────────────────────────────────────────┘        │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+![SEALrfq System Diagram](./documentation/assets/sealrfq-system-architecture.svg)
 
 ---
 
