@@ -14,14 +14,19 @@ export default function Navbar() {
     const pathname = usePathname();
     const [isOpen, setIsOpen] = useState(false);
     const [scrolled, setScrolled] = useState(false);
+    const [hidden, setHidden] = useState(false);
     const { walletAddress, role, connecting, switchRole, connectWallet, disconnectWallet, switchingRole } = useWallet();
 
-    // Handle scroll effect
+    // Hide on scroll down, show on scroll up
     useEffect(() => {
+        let lastY = window.scrollY;
         const handleScroll = () => {
-            setScrolled(window.scrollY > 20);
+            const currentY = window.scrollY;
+            setScrolled(currentY > 20);
+            setHidden(currentY > lastY && currentY > 80);
+            lastY = currentY;
         };
-        window.addEventListener('scroll', handleScroll);
+        window.addEventListener('scroll', handleScroll, { passive: true });
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
@@ -62,7 +67,8 @@ export default function Navbar() {
             transition={{ duration: 0.5 }}
             className={cn(
                 "fixed w-full z-50 top-0 start-0 transition-all duration-300 border-b border-white/5",
-                scrolled ? "glass-panel border-white/10" : "bg-transparent border-transparent"
+                scrolled ? "glass-panel border-white/10" : "bg-transparent border-transparent",
+                hidden ? "-translate-y-full" : "translate-y-0"
             )}
         >
             <div className="max-w-7xl flex flex-wrap items-center justify-between mx-auto p-4">
