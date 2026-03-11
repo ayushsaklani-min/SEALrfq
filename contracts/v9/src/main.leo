@@ -1,38 +1,21 @@
 import credits.aleo;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// sealrfq_v9.aleo — Sealed-Bid RFQ Protocol
+// SEALrfq — Privacy-Preserving Sealed-Bid Procurement on Aleo
 program sealrfq_v9.aleo {
 
-    // ─── CONSTANTS ───────────────────────────────────────────────────────────
+    // ─── CONSTANTS ──────────────────────────────────────────────────────
 
-    // 1 billion microcredits = 1,000 ALEO.
-    const MAX_BID_AMOUNT:          u64 = 1_000_000_000u64;
-
-    // Flat stake = floor(rfq_min_bid * 10 / 100). Uniform across all bidders
-    // so the public stake amount reveals nothing about the private bid.
+    const MAX_BID_AMOUNT:          u64 = 1_000_000_000u64; // 1,000 ALEO cap
     const MIN_STAKE_PERCENTAGE:    u8  = 10u8;
-
-    // Maximum total RFQ lifetime in blocks.
     const MAX_RFQ_DURATION:        u32 = 100_000u32;
-
-    // Shortened for testnet smoke coverage.
     const MIN_REVEAL_WINDOW:       u32 = 10u32;
-
-    // Shortened for testnet smoke coverage.
     const ESCROW_TIMEOUT_BLOCKS:   u32 = 20u32;
-
-    // Shortened for testnet smoke coverage.
     const SLASH_WINDOW:            u32 = 20u32;
-
-    // Shortened for testnet smoke coverage.
     const ESCROW_RECOVERY_BLOCKS:  u32 = 30u32;
+    const MIN_PARTIAL_RELEASE_PCT: u8  = 1u8; // Anti-dust: prevents griefing via thousands of micro-payments
 
-    // Minimum partial release as percentage of escrow_original.
-    // Prevents griefing via thousands of dust-level partial payments.
-    const MIN_PARTIAL_RELEASE_PCT: u8  = 1u8;
+    // ─── STATUS CODES ───────────────────────────────────────────────────
 
-    // ─── STATUS CODES ────────────────────────────────────────────────────────
     const STATUS_NONE:             u8 = 0u8;
     const STATUS_OPEN:             u8 = 1u8;
     const STATUS_REVEAL:           u8 = 2u8;
@@ -42,36 +25,31 @@ program sealrfq_v9.aleo {
     const STATUS_CANCELLED:        u8 = 6u8;
     const STATUS_WINNER_DECLINED:  u8 = 7u8;
 
-    // ─── STRUCTS ─────────────────────────────────────────────────────────────
+    // ─── STRUCTS ────────────────────────────────────────────────────────
 
-    // Both bid_amount and nonce are private inputs — never visible on-chain.
-    // Commitment is preimage-resistant given a random nonce.
+    // Commitment preimage — both fields are PRIVATE ZK inputs, never visible on-chain.
     struct CommitmentInput {
         bid_amount: u64,
         nonce:      field,
     }
 
-    // Hashed key for per-actor per-action per-rfq nonce tracking.
     struct NonceKey {
         actor:      address,
         action_tag: u8,
         rfq_id:     field,
     }
 
-    // Hashed key for per-vendor per-rfq bid count tracking.
     struct VendorRFQKey {
         vendor: address,
         rfq_id: field,
     }
 
-    // Composite key for all bid-level mappings.
     struct BidKey {
         rfq_id: field,
         bid_id: field,
     }
 
-    // ─── RECORDS ─────────────────────────────────────────────────────────────
-    // All records are private to their owner by Aleo's record model.
+    // ─── RECORDS (private to owner by Aleo's record model) ─────────────
 
     record RFQCreated {
         owner:            address,
@@ -179,9 +157,8 @@ program sealrfq_v9.aleo {
         amount: u64,
     }
 
-    // ─── MAPPINGS ────────────────────────────────────────────────────────────
+    // ─── MAPPINGS ───────────────────────────────────────────────────────
 
-    // RFQ lifecycle
     mapping rfq_status:                field => u8;
     mapping rfq_bidding_deadlines:     field => u32;
     mapping rfq_reveal_deadlines:      field => u32;
@@ -192,14 +169,13 @@ program sealrfq_v9.aleo {
     mapping rfq_winner_address:        field => address;
     mapping rfq_winner_selected_block: field => u32;
     mapping rfq_escrow_funded_block:   field => u32;
-    mapping rfq_escrow_timeout_block:  field => u32;   // [MED-3 FIX] now defined and populated
+    mapping rfq_escrow_timeout_block:  field => u32;
     mapping rfq_metadata_hash:         field => field;
     mapping rfq_lowest_bid:            field => u64;
     mapping rfq_lowest_bid_id:         field => field;
     mapping rfq_flat_stake:            field => u64;
     mapping rfq_revealed_count:        field => u64;
 
-    // Bid-level state (keyed by BHP256::hash_to_field(BidKey{rfq_id, bid_id}))
     mapping bid_commitments:  field => field;
     mapping bid_owner:        field => address;
     mapping revealed_bids:    field => u64;
@@ -207,27 +183,24 @@ program sealrfq_v9.aleo {
     mapping winner_bids:      field => field;
     mapping vendor_bid_count: field => u64;
 
-    // Escrow accounting
     mapping escrow_original:        field => u64;
     mapping escrow_amounts:         field => u64;
     mapping total_released:         field => u64;
     mapping final_payment_released: field => bool;
 
-    // Replay-protection nonces (per actor, per action_tag, per rfq — strictly sequential)
+    // Replay-protection: strictly sequential nonces per actor per action per RFQ
     mapping actor_commit_nonces:  field => u64;
     mapping actor_reveal_nonces:  field => u64;
     mapping actor_payment_nonces: field => u64;
 
-    // Winner acceptance gate (false = pending, true = accepted)
     mapping rfq_winner_accepted: field => bool;
 
     @noupgrade
     async constructor() {}
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
     // 1. CREATE RFQ
-    // Creator registers a new sealed-bid RFQ with deadlines and parameters.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition create_rfq(
         public rfq_id:           field,
@@ -242,12 +215,10 @@ program sealrfq_v9.aleo {
         assert(min_bid        < MAX_BID_AMOUNT);
         assert(min_bid_count  > 0u64);
         assert(metadata_hash != 0field);
-        // Transition-side guard prevents submitting a provably invalid tx.
         assert(reveal_deadline > bidding_deadline);
 
-        // Pre-compute the flat stake for bidders' convenience.
-        // All bidders pay this same amount so the public transfer reveals
-        // nothing about individual private bid amounts. [PRIV-1 from v6]
+        // PRIVACY: flat stake = f(min_bid) — identical for all bidders,
+        // so the public stake transfer leaks zero information about private bid amounts.
         let flat_stake: u64 = (min_bid * (MIN_STAKE_PERCENTAGE as u64)) / 100u64;
         assert(flat_stake > 0u64);
 
@@ -281,7 +252,6 @@ program sealrfq_v9.aleo {
         flat_stake:       u64,
         creator:          address
     ) {
-        // Sentinel guard — 0field is used as "not set" in several mappings.
         assert(rfq_id != 0field);
 
         let now: u32 = block.height;
@@ -289,11 +259,10 @@ program sealrfq_v9.aleo {
         assert(bidding_deadline  <= now + MAX_RFQ_DURATION);
         assert(reveal_deadline   > now);
         assert(reveal_deadline   <= now + MAX_RFQ_DURATION);
-        // [MIN-1 FIX] Explicit guard before the subtraction prevents u32 wrap-around.
         assert(reveal_deadline   > bidding_deadline);
         assert(reveal_deadline - bidding_deadline >= MIN_REVEAL_WINDOW);
 
-        // Idempotency: rfq_id must not already exist.
+        // Idempotency: rfq_id must not already exist
         let existing: u8 = Mapping::get_or_use(rfq_status, rfq_id, STATUS_NONE);
         assert_eq(existing, STATUS_NONE);
 
@@ -311,38 +280,35 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_revealed_count,    rfq_id, 0u64);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 2. SUBMIT BID COMMIT
+    // ═════════════════════════════════════════════════════════════════════
+    // 2. SUBMIT BID COMMIT — Zero-Knowledge Sealed Bid
     //
-    // [CRIT-2 FIX] bid_amount is no longer passed to finalize.
-    // Instead, the caller supplies claimed_min_bid (a public value):
-    //   - Transition (ZK circuit) privately proves: bid_amount >= claimed_min_bid
-    //   - Finalize on-chain validates:               claimed_min_bid == rfq_min_bids[rfq_id]
-    // Together: bid_amount >= min_bid is proven without leaking bid_amount.
+    // KEY PRIVACY MECHANISM: bid_amount never leaves the ZK circuit.
+    // The caller supplies a public claimed_min_bid:
+    //   • Transition proves privately:  bid_amount >= claimed_min_bid
+    //   • Finalize validates on-chain:  claimed_min_bid == rfq_min_bids[rfq_id]
+    // Result: bid_amount >= min_bid is proven without revealing the bid.
     //
-    // Only one bid per vendor per RFQ is permitted.
-    // Stake is a flat amount (rfq_flat_stake) — uniform across all bidders.
-    // ═══════════════════════════════════════════════════════════════════════
+    // One bid per vendor per RFQ. Flat stake reveals nothing about bid amount.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition submit_bid_commit(
         public rfq_id:          field,
-               bid_amount:      u64,    // PRIVATE — stays in ZK circuit, never on-chain
-               nonce:           field,  // PRIVATE — stays in ZK circuit, never on-chain
-        public stake:           u64,    // Must equal rfq_flat_stake[rfq_id]
+               bid_amount:      u64,    // PRIVATE — ZK circuit only
+               nonce:           field,  // PRIVATE — ZK circuit only
+        public stake:           u64,
         public bid_id:          field,
         public user_nonce:      u64,
-        public claimed_min_bid: u64    // [CRIT-2 FIX] public; validated against on-chain min_bid in finalize
+        public claimed_min_bid: u64
     ) -> (BidCommitted, Future) {
         assert(bid_id          != 0field);
         assert(bid_amount       > 0u64);
         assert(bid_amount       < MAX_BID_AMOUNT);
         assert(stake            > 0u64);
         assert(stake            < MAX_BID_AMOUNT);
-        // Zero nonce reduces commitment to hash(bid_amount, 0) — brute-forceable. [BUG-1 from v6]
-        assert(nonce           != 0field);
+        assert(nonce           != 0field); // Zero nonce makes commitment brute-forceable
 
-        // [CRIT-2 FIX] ZK circuit privately proves bid_amount >= claimed_min_bid.
-        // finalize will verify claimed_min_bid == actual on-chain min_bid.
+        // ZK PROOF: privately asserts bid >= min_bid without revealing bid
         assert(bid_amount >= claimed_min_bid);
 
         let commitment: field = BHP256::hash_to_field(CommitmentInput {
@@ -366,7 +332,6 @@ program sealrfq_v9.aleo {
             bid_id: bid_id,
         });
 
-        // Debit the wallet signer and credit the program account.
         let stake_future: Future = credits.aleo/transfer_public_as_signer(self.address, stake);
 
         let event: BidCommitted = BidCommitted {
@@ -387,18 +352,18 @@ program sealrfq_v9.aleo {
     }
 
     async function finalize_submit_bid_commit(
-        unique_bid_key: field,
-        commitment:     field,
-        rfq_id:         field,
-        claimed_min_bid: u64,   // [CRIT-2 FIX] replaces bid_amount — carries no private info
-        stake:          u64,
-        nonce_key:      field,
-        user_nonce:     u64,
-        vendor:         address,
-        vendor_rfq_key: field,
-        stake_future:   Future
+        unique_bid_key:  field,
+        commitment:      field,
+        rfq_id:          field,
+        claimed_min_bid: u64,
+        stake:           u64,
+        nonce_key:       field,
+        user_nonce:      u64,
+        vendor:          address,
+        vendor_rfq_key:  field,
+        stake_future:    Future
     ) {
-        // Strictly sequential nonces prevent replay.
+        // Sequential nonces prevent replay attacks
         let stored_nonce: u64 = Mapping::get_or_use(actor_commit_nonces, nonce_key, 0u64);
         assert_eq(user_nonce, stored_nonce + 1u64);
 
@@ -408,21 +373,19 @@ program sealrfq_v9.aleo {
         let bidding_deadline: u32 = Mapping::get(rfq_bidding_deadlines, rfq_id);
         assert(block.height < bidding_deadline);
 
-        // [CRIT-2 FIX] Validate claimed_min_bid equals the authoritative on-chain value.
-        // Combined with the transition's assert(bid_amount >= claimed_min_bid),
-        // this proves bid_amount >= rfq_min_bids[rfq_id] without leaking bid_amount.
+        // On-chain half of the ZK min-bid proof: claimed_min_bid == actual
         let actual_min_bid: u64 = Mapping::get(rfq_min_bids, rfq_id);
         assert_eq(claimed_min_bid, actual_min_bid);
 
-        // Flat stake validation: all bidders must post exactly the same amount.
+        // All bidders post identical stake — zero information leakage
         let expected_flat_stake: u64 = Mapping::get(rfq_flat_stake, rfq_id);
         assert_eq(stake, expected_flat_stake);
 
-        // Prevent duplicate bid_id within the same RFQ.
+        // Prevent duplicate bid_id
         let existing: field = Mapping::get_or_use(bid_commitments, unique_bid_key, 0field);
         assert_eq(existing, 0field);
 
-        // Each vendor may submit at most one bid per RFQ.
+        // One bid per vendor per RFQ
         let existing_count: u64 = Mapping::get_or_use(vendor_bid_count, vendor_rfq_key, 0u64);
         assert_eq(existing_count, 0u64);
 
@@ -439,11 +402,9 @@ program sealrfq_v9.aleo {
         Mapping::set(actor_commit_nonces, nonce_key, user_nonce);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 3. CLOSE BIDDING
-    // Permissionless — anyone can advance state once the bidding deadline has
-    // passed AND the minimum bid count is met.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 3. CLOSE BIDDING — Permissionless state advance after deadline
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition close_bidding(
         public rfq_id: field
@@ -465,17 +426,14 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_status, rfq_id, STATUS_REVEAL);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 4. REVEAL BID
-    // [MED-1 FIX] finalize now asserts bid_amount >= rfq_min_bids[rfq_id].
-    // The commitment scheme prevents amount-switching, but the on-chain check
-    // provides defense-in-depth and is consistent with the CRIT-2 fix.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 4. REVEAL BID — Commitment verified, lowest-bid tracked on-chain
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition reveal_bid(
         public rfq_id:     field,
         public bid_id:     field,
-               bid_amount: u64,    // PRIVATE — but publicly recorded on-chain after reveal
+               bid_amount: u64,    // PRIVATE input — recorded on-chain after verification
                nonce:      field,  // PRIVATE — never stored
         public user_nonce: u64
     ) -> (BidRevealed, Future) {
@@ -533,30 +491,26 @@ program sealrfq_v9.aleo {
         let reveal_deadline: u32 = Mapping::get(rfq_reveal_deadlines, rfq_id);
         assert(block.height < reveal_deadline);
 
-        // Caller must be the original bid owner.
         let owner: address = Mapping::get(bid_owner, unique_bid_key);
         assert_eq(owner, caller);
 
-        // Commitment must exist and must match the hash of revealed values.
+        // COMMITMENT VERIFICATION: hash(revealed_amount, nonce) must match the stored commitment.
+        // This is the core integrity guarantee — no bid-switching is possible.
         let stored: field = Mapping::get_or_use(bid_commitments, unique_bid_key, 0field);
         assert(stored != 0field);
         assert_eq(stored, commitment);
 
-        // Prevent double-reveal.
+        // Prevent double-reveal
         let already_revealed: u64 = Mapping::get_or_use(revealed_bids, unique_bid_key, 0u64);
         assert_eq(already_revealed, 0u64);
 
-        // [MED-1 FIX] Defense-in-depth: confirm the revealed amount meets the minimum.
-        // The commitment scheme guarantees no amount-switching, but this on-chain
-        // assertion provides an additional layer of validation.
+        // Defense-in-depth: verify revealed amount meets minimum
         let min_bid: u64 = Mapping::get(rfq_min_bids, rfq_id);
         assert(bid_amount >= min_bid);
 
         Mapping::set(revealed_bids, unique_bid_key, bid_amount);
 
-        // Update running lowest-bid tracker.
-        // [PRIV-3 NOTE] This is publicly observable — a watching vendor may choose
-        // not to reveal if already outbid. Accepted design tradeoff for on-chain auctions.
+        // On-chain lowest-bid tracker for automatic winner determination
         let current_lowest: u64      = Mapping::get_or_use(rfq_lowest_bid,    rfq_id, MAX_BID_AMOUNT);
         let current_lowest_id: field = Mapping::get_or_use(rfq_lowest_bid_id, rfq_id, 0field);
 
@@ -572,12 +526,12 @@ program sealrfq_v9.aleo {
         Mapping::set(actor_reveal_nonces, nonce_key, user_nonce);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 5. SELECT WINNER
-    // Permissionless after reveal deadline. Caller supplies the claimed winner;
-    // finalize validates ALL claims against on-chain truth.
-    // Tie-breaking: first-revealer wins (first-write-wins). Intentional design.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 5. SELECT WINNER — Fully validated against on-chain state
+    //
+    // All claims (bid_id, amount, address) are verified against mappings.
+    // Tie-breaking: first-revealer wins (first-write-wins in lowest tracker).
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition select_winner(
         public rfq_id:         field,
@@ -622,35 +576,31 @@ program sealrfq_v9.aleo {
         let reveal_deadline: u32 = Mapping::get(rfq_reveal_deadlines, rfq_id);
         assert(block.height >= reveal_deadline);
 
-        // Validate winning_amount against on-chain revealed value (cannot be spoofed).
+        // Every claim is validated against on-chain truth — no spoofing possible
         let actual_winning_amount: u64 = Mapping::get_or_use(revealed_bids, unique_bid_key, 0u64);
         assert(actual_winning_amount > 0u64);
         assert_eq(winning_amount, actual_winning_amount);
 
-        // Supplied bid_id must match the on-chain tracked lowest bid.
         let lowest_bid_id: field = Mapping::get(rfq_lowest_bid_id, rfq_id);
         assert_eq(winning_bid_id, lowest_bid_id);
 
-        // Validate winner_address against on-chain bid owner.
         let actual_winner: address = Mapping::get(bid_owner, unique_bid_key);
         assert_eq(winner_address, actual_winner);
-
-        // Zero-address guard.
         assert(actual_winner != aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc);
 
         Mapping::set(winner_bids,               rfq_id, unique_bid_key);
         Mapping::set(rfq_winner_address,        rfq_id, actual_winner);
         Mapping::set(rfq_status,                rfq_id, STATUS_WINNER_SELECTED);
         Mapping::set(rfq_winner_selected_block, rfq_id, block.height);
-        // Initialise acceptance state to false — winner must explicitly accept.
         Mapping::set(rfq_winner_accepted,       rfq_id, false);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 6. WINNER ACCEPT
-    // Selected winner explicitly accepts the award. Only after acceptance
-    // can the creator fund the escrow — prevents forced commitments.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 6. WINNER ACCEPT — Consent gate before escrow funding
+    //
+    // Prevents forced commitments: buyer cannot lock vendor into a contract
+    // without explicit on-chain acceptance.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition winner_accept(
         public rfq_id: field
@@ -670,30 +620,26 @@ program sealrfq_v9.aleo {
         let winner: address = Mapping::get(rfq_winner_address, rfq_id);
         assert_eq(caller, winner);
 
-        // Idempotency guard — can only accept once.
         let already_accepted: bool = Mapping::get_or_use(rfq_winner_accepted, rfq_id, false);
         assert_eq(already_accepted, false);
 
         Mapping::set(rfq_winner_accepted, rfq_id, true);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 7. WINNER DECLINE
-    // [CRIT-1 FIX] Winner's stake is now correctly slashed to the CREATOR.
-    // In v6 the stake was transferred to self.caller (the winner), making
-    // the decline penalty effectively zero. A new public `creator` parameter
-    // is required and validated in finalize against rfq_creators[rfq_id].
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 7. WINNER DECLINE — Stake slashed to RFQ creator as penalty
+    //
+    // Creator address is validated on-chain to prevent stake misdirection.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition winner_decline(
         public rfq_id:   field,
         public stake:    u64,
-        public creator:  address   // [CRIT-1 FIX] stake penalty recipient; validated on-chain
+        public creator:  address
     ) -> (WinnerDeclined, Future) {
-        // Guard against accidentally slashing to the zero address.
         assert(creator != aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc);
 
-        // [CRIT-1 FIX] Slash the winner's stake to the creator as a decline penalty.
+        // Stake penalty: transferred to creator, not back to the declining winner
         let slash_future: Future = credits.aleo/transfer_public(creator, stake);
 
         let event: WinnerDeclined = WinnerDeclined {
@@ -714,19 +660,16 @@ program sealrfq_v9.aleo {
         let status: u8 = Mapping::get(rfq_status, rfq_id);
         assert_eq(status, STATUS_WINNER_SELECTED);
 
-        // Only the selected winner may decline.
         let winner: address = Mapping::get(rfq_winner_address, rfq_id);
         assert_eq(caller, winner);
 
-        // Cannot decline after having already accepted.
         let already_accepted: bool = Mapping::get_or_use(rfq_winner_accepted, rfq_id, false);
         assert_eq(already_accepted, false);
 
-        // [CRIT-1 FIX] Validate the supplied creator is the actual RFQ creator.
         let actual_creator: address = Mapping::get(rfq_creators, rfq_id);
         assert_eq(creator, actual_creator);
 
-        // Validate and zero stake before transfer (checks-effects-interactions).
+        // Checks-effects-interactions: zero stake before transfer
         let winner_key: field   = Mapping::get(winner_bids, rfq_id);
         let expected_stake: u64 = Mapping::get_or_use(bid_stakes, winner_key, 0u64);
         assert_eq(stake, expected_stake);
@@ -738,10 +681,9 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_status, rfq_id, STATUS_WINNER_DECLINED);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 8. REFUND STAKE — WINNER DECLINED
-    // Non-winners (revealed and unrevealed) reclaim stakes after winner declined.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 8. REFUND STAKE — After winner declined (non-winners reclaim)
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition refund_stake_declined(
         public rfq_id: field,
@@ -779,22 +721,21 @@ program sealrfq_v9.aleo {
         let owner: address = Mapping::get(bid_owner, unique_bid_key);
         assert_eq(owner, caller);
 
-        // The declined winner already forfeited their stake — they cannot call this.
+        // Declined winner already forfeited — excluded from this refund path
         let winner_key: field = Mapping::get(winner_bids, rfq_id);
         assert(unique_bid_key != winner_key);
 
         let expected_stake: u64 = Mapping::get_or_use(bid_stakes, unique_bid_key, 0u64);
         assert_eq(stake, expected_stake);
         assert(stake > 0u64);
-        // Zero before transfer.
         Mapping::set(bid_stakes, unique_bid_key, 0u64);
 
         refund_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 9. CANCEL RFQ — CREATOR INITIATED (STATUS_OPEN only)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 9. CANCEL RFQ — Creator-initiated (STATUS_OPEN only)
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition cancel_rfq(
         public rfq_id: field
@@ -818,9 +759,9 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_status, rfq_id, STATUS_CANCELLED);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 10. CANCEL RFQ — INSUFFICIENT BIDS (permissionless after bidding deadline)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 10. CANCEL RFQ — Insufficient bids (permissionless after deadline)
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition cancel_rfq_insufficient_bids(
         public rfq_id:  field,
@@ -852,12 +793,12 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_status, rfq_id, STATUS_CANCELLED);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 11. CANCEL RFQ — STUCK REVEAL (permissionless escape hatch)
-    // Triggered when ALL vendors fail to reveal AND the slash window expires.
-    // Both windows fully elapsed — no slash or reveal possible — RFQ is stuck.
-    // Creator address is public; anyone can call once conditions are met.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 11. CANCEL RFQ — Stuck reveal (permissionless escape hatch)
+    //
+    // When ALL vendors fail to reveal and the slash window expires,
+    // the RFQ is permanently stuck. This provides a clean exit path.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition cancel_rfq_stuck_reveal(
         public rfq_id:  field,
@@ -887,15 +828,12 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_status, rfq_id, STATUS_CANCELLED);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 12. CANCEL RFQ — NO ESCROW FUNDED (permissionless after timeout)
-    // Allows STATUS_WINNER_SELECTED → STATUS_CANCELLED when the creator never
-    // funded the escrow after ESCROW_TIMEOUT_BLOCKS. Unblocks ALL vendor stakes
-    // via refund_stake_cancelled (not just the winner via claim_locked_winner_stake).
+    // ═════════════════════════════════════════════════════════════════════
+    // 12. CANCEL RFQ — No escrow funded (permissionless timeout)
     //
-    // [MED-3 FIX] Now records the cancellation block in rfq_escrow_timeout_block
-    //             for on-chain auditability (was in v6 changelog but not implemented).
-    // ═══════════════════════════════════════════════════════════════════════
+    // Creator never funded escrow after ESCROW_TIMEOUT_BLOCKS.
+    // Unblocks ALL vendor stakes via refund_stake_cancelled.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition cancel_rfq_no_escrow(
         public rfq_id:  field,
@@ -920,16 +858,13 @@ program sealrfq_v9.aleo {
         let selected_block: u32 = Mapping::get(rfq_winner_selected_block, rfq_id);
         assert(block.height > selected_block + ESCROW_TIMEOUT_BLOCKS);
 
-        // [MED-3 FIX] Record the block at which the escrow timeout cancellation occurred.
         Mapping::set(rfq_escrow_timeout_block, rfq_id, block.height);
         Mapping::set(rfq_status,               rfq_id, STATUS_CANCELLED);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 13. REFUND STAKE — CANCELLED RFQ
-    // Works for any vendor (revealed or not, winner or non-winner) on any
-    // CANCELLED RFQ. Covers all cancellation paths including creator_reclaim_escrow.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 13. REFUND STAKE — Cancelled RFQ (any vendor, any cancellation path)
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition refund_stake_cancelled(
         public rfq_id: field,
@@ -971,24 +906,18 @@ program sealrfq_v9.aleo {
         assert_eq(stake, expected_stake);
         assert(stake > 0u64);
 
-        // Zero stake before transfer (checks-effects-interactions).
         Mapping::set(bid_stakes, unique_bid_key, 0u64);
 
         refund_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 14. RECLAIM UNREVEALED STAKE
-    // [MIN-2 FIX] Now accepts STATUS_REVEAL OR STATUS_WINNER_SELECTED.
+    // ═════════════════════════════════════════════════════════════════════
+    // 14. RECLAIM UNREVEALED STAKE — After slash window expires
     //
-    // Previously only STATUS_REVEAL was accepted. If winner selection moved the
-    // state to STATUS_WINNER_SELECTED before the slash window expired, an
-    // unrevealed non-winner lost access to this function with no other path
-    // available (CRIT-3 covers refund_stake; this provides defense-in-depth).
-    //
-    // The winner guard (unique_bid_key != winner_key) plus (revealed == 0) make
-    // it impossible for the selected winner to use this path.
-    // ═══════════════════════════════════════════════════════════════════════
+    // Unrevealed bidders who missed the reveal deadline but were NOT slashed
+    // can reclaim their stakes once the slash window fully expires.
+    // Works in STATUS_REVEAL and STATUS_WINNER_SELECTED for complete coverage.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition reclaim_unrevealed_stake(
         public rfq_id: field,
@@ -1022,30 +951,25 @@ program sealrfq_v9.aleo {
         refund_future:  Future
     ) {
         let status: u8 = Mapping::get(rfq_status, rfq_id);
-        // [MIN-2 FIX] Accept STATUS_REVEAL (pre-selection) or STATUS_WINNER_SELECTED
-        // (post-selection where slash window expired before or after selection).
-        // STATUS_REVEAL = 2, STATUS_WINNER_SELECTED = 3 — these are adjacent values.
+        // Accept both pre-selection (REVEAL) and post-selection (WINNER_SELECTED)
         assert(status >= STATUS_REVEAL);
         assert(status <= STATUS_WINNER_SELECTED);
 
-        // Slash window must be fully expired — slashing is no longer possible.
+        // Slash window must be fully expired
         let reveal_deadline: u32 = Mapping::get(rfq_reveal_deadlines, rfq_id);
         assert(block.height > reveal_deadline + SLASH_WINDOW);
 
         let owner: address = Mapping::get(bid_owner, unique_bid_key);
         assert_eq(owner, caller);
 
-        // This path is only for non-revealers.
+        // Only for non-revealers
         let revealed: u64 = Mapping::get_or_use(revealed_bids, unique_bid_key, 0u64);
         assert_eq(revealed, 0u64);
 
-        // Must have committed in the first place.
         let commitment: field = Mapping::get_or_use(bid_commitments, unique_bid_key, 0field);
         assert(commitment != 0field);
 
-        // [MIN-2 FIX] In STATUS_WINNER_SELECTED, additionally guard against
-        // the selected winner using this path (winner must have revealed, so
-        // revealed==0 above is already sufficient — this is defense-in-depth).
+        // Defense-in-depth: exclude the winner (who must have revealed)
         let winner_key: field = Mapping::get_or_use(winner_bids, rfq_id, 0field);
         assert(unique_bid_key != winner_key);
 
@@ -1053,17 +977,17 @@ program sealrfq_v9.aleo {
         assert_eq(stake, expected_stake);
         assert(stake > 0u64);
 
-        // Zero before transfer (checks-effects-interactions).
         Mapping::set(bid_stakes, unique_bid_key, 0u64);
 
         refund_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 15. FUND ESCROW
-    // Creator funds the escrow with exactly the winning bid amount.
-    // Requires winner_accepted == true first.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 15. FUND ESCROW — Creator locks winning bid amount on-chain
+    //
+    // Requires winner_accepted == true (consent gate).
+    // Amount must exactly match the winning bid — no overpay/underpay.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition fund_escrow(
         public rfq_id: field,
@@ -1072,7 +996,6 @@ program sealrfq_v9.aleo {
         assert(amount > 0u64);
         assert(amount < MAX_BID_AMOUNT);
 
-        // Debit the wallet signer and credit the program account.
         let escrow_future: Future = credits.aleo/transfer_public_as_signer(self.address, amount);
 
         let event: EscrowFunded = EscrowFunded {
@@ -1097,11 +1020,11 @@ program sealrfq_v9.aleo {
         let creator: address = Mapping::get(rfq_creators, rfq_id);
         assert_eq(caller, creator);
 
-        // Winner must have explicitly accepted before creator funds.
+        // CONSENT GATE: winner must have explicitly accepted
         let accepted: bool = Mapping::get_or_use(rfq_winner_accepted, rfq_id, false);
         assert_eq(accepted, true);
 
-        // Amount must equal the winning bid exactly.
+        // Exact match required — prevents any overpay/underpay manipulation
         let winner_key: field   = Mapping::get(winner_bids, rfq_id);
         let winning_amount: u64 = Mapping::get(revealed_bids, winner_key);
         assert_eq(amount, winning_amount);
@@ -1109,7 +1032,7 @@ program sealrfq_v9.aleo {
         let winner_addr: address = Mapping::get(rfq_winner_address, rfq_id);
         assert(winner_addr != aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc);
 
-        // Idempotency: escrow must not already be funded.
+        // Idempotency: escrow must not already be funded
         let existing: u64 = Mapping::get_or_use(escrow_amounts, rfq_id, 0u64);
         assert_eq(existing, 0u64);
 
@@ -1123,17 +1046,13 @@ program sealrfq_v9.aleo {
         Mapping::set(rfq_status,              rfq_id, STATUS_ESCROW_FUNDED);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 16. RELEASE PARTIAL PAYMENT
+    // ═════════════════════════════════════════════════════════════════════
+    // 16. RELEASE PARTIAL PAYMENT — Milestone-based escrow release
+    //
     // Creator releases a percentage of REMAINING escrow to the winner.
-    //
-    // [BUG-5 from v6] If remaining balance reaches 0 after partial release,
-    //   status auto-advances to STATUS_COMPLETED so winner's stake is released.
-    //
-    // [MED-2 FIX] effective_min = max(computed_min, 1u64).
-    //   For escrows below 100 microcredits, (original * 1 / 100) = 0, which
-    //   silently bypassed the dust guard. Now enforces at least 1 microcredit.
-    // ═══════════════════════════════════════════════════════════════════════
+    // Anti-dust minimum prevents griefing via micro-payments.
+    // Auto-completes if escrow fully drained by partial releases.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition release_partial_payment(
         public rfq_id:             field,
@@ -1202,14 +1121,12 @@ program sealrfq_v9.aleo {
         let expected_winner: address = Mapping::get(rfq_winner_address, rfq_id);
         assert_eq(winner, expected_winner);
 
-        // Validate the caller-supplied release_amount matches the on-chain formula.
         let expected_release_amount: u64 = (remaining * (percentage as u64)) / 100u64;
         assert_eq(release_amount, expected_release_amount);
         assert(release_amount > 0u64);
         assert(release_amount <= remaining);
 
-        // [MED-2 FIX] For escrows < 100 microcredits, integer division yields 0,
-        // bypassing the dust guard. effective_min ensures at least 1 is enforced.
+        // Anti-dust: enforce minimum release amount (handles sub-100 microcredit escrows)
         let computed_min:  u64 = (original * (MIN_PARTIAL_RELEASE_PCT as u64)) / 100u64;
         let effective_min: u64 = computed_min > 0u64 ? computed_min : 1u64;
         assert(release_amount >= effective_min);
@@ -1224,7 +1141,7 @@ program sealrfq_v9.aleo {
         Mapping::set(escrow_amounts,       rfq_id, new_remaining);
         Mapping::set(actor_payment_nonces, nonce_key, user_nonce);
 
-        // [BUG-5 from v6] Auto-complete when escrow is fully drained.
+        // Auto-complete when escrow fully drained via partial releases
         let is_complete: bool = new_remaining == 0u64;
         let next_status: u8   = is_complete ? STATUS_COMPLETED : STATUS_ESCROW_FUNDED;
         Mapping::set(rfq_status, rfq_id, next_status);
@@ -1232,10 +1149,9 @@ program sealrfq_v9.aleo {
         Mapping::set(final_payment_released, rfq_id, mark_final);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 17. RELEASE FINAL PAYMENT
-    // Releases all remaining escrow to the winner and moves to STATUS_COMPLETED.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 17. RELEASE FINAL PAYMENT — Full remaining escrow to winner
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition release_final_payment(
         public rfq_id:     field,
@@ -1304,12 +1220,12 @@ program sealrfq_v9.aleo {
         Mapping::set(actor_payment_nonces,   nonce_key, user_nonce);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 18. SLASH NON-REVEALER
-    // Status STRICTLY equals STATUS_REVEAL — no slashing after winner selection.
-    // Creator receives the stake as compensation for disrupted procurement.
-    // Only callable within the SLASH_WINDOW blocks after reveal_deadline.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 18. SLASH NON-REVEALER — Economic penalty for bid abandonment
+    //
+    // Only during SLASH_WINDOW after reveal deadline. Stakes go to creator
+    // as compensation for disrupted procurement. Enforces honest participation.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition slash_non_revealer(
         public rfq_id: field,
@@ -1343,23 +1259,21 @@ program sealrfq_v9.aleo {
         stake:          u64,
         slash_future:   Future
     ) {
-        // Must be STRICTLY STATUS_REVEAL — slashing after winner selection is forbidden.
+        // STRICTLY STATUS_REVEAL — no slashing after winner selection
         let status: u8 = Mapping::get(rfq_status, rfq_id);
         assert_eq(status, STATUS_REVEAL);
 
         let creator: address = Mapping::get(rfq_creators, rfq_id);
         assert_eq(caller, creator);
 
-        // Slash window: after reveal_deadline AND within SLASH_WINDOW blocks.
+        // Time-bounded: only within SLASH_WINDOW after reveal deadline
         let reveal_deadline: u32 = Mapping::get(rfq_reveal_deadlines, rfq_id);
         assert(block.height >  reveal_deadline);
         assert(block.height <= reveal_deadline + SLASH_WINDOW);
 
-        // Target must have committed (have a non-zero commitment).
         let commitment: field = Mapping::get_or_use(bid_commitments, unique_bid_key, 0field);
         assert(commitment != 0field);
 
-        // Target must NOT have revealed.
         let revealed: u64 = Mapping::get_or_use(revealed_bids, unique_bid_key, 0u64);
         assert_eq(revealed, 0u64);
 
@@ -1367,28 +1281,18 @@ program sealrfq_v9.aleo {
         assert_eq(stake, expected_stake);
         assert(stake > 0u64);
 
-        // Zero before transfer (checks-effects-interactions).
         Mapping::set(bid_stakes, unique_bid_key, 0u64);
 
         slash_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 19. REFUND STAKE (non-winners, post winner selection)
+    // ═════════════════════════════════════════════════════════════════════
+    // 19. REFUND STAKE — Non-winners after winner selection
     //
-    // [CRIT-3 FIX] Removed the revealed > 0 requirement. Unrevealed non-winners
-    //   can now reclaim their stakes after winner selection if they were not
-    //   slashed and the RFQ was not cancelled. Re-entrancy protection is
-    //   preserved by zeroing bid_stakes BEFORE the transfer.
-    //
-    // [MIN-3 FIX] Explicitly excludes STATUS_CANCELLED (6). Cancelled-RFQ
-    //   refunds belong in refund_stake_cancelled. While not exploitable (stake
-    //   zeroing prevents double claims), explicit exclusion eliminates ambiguity.
-    //
-    // Covers post-selection states:
-    //   STATUS_WINNER_SELECTED (3), STATUS_ESCROW_FUNDED (4),
-    //   STATUS_COMPLETED (5), STATUS_WINNER_DECLINED (7)
-    // ═══════════════════════════════════════════════════════════════════════
+    // Covers all post-selection states. Both revealed and unrevealed
+    // non-winners can reclaim (unrevealed who missed the slash window
+    // are not penalized — they just didn't compete).
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition refund_stake(
         public rfq_id: field,
@@ -1422,35 +1326,31 @@ program sealrfq_v9.aleo {
         refund_future:  Future
     ) {
         let status: u8 = Mapping::get(rfq_status, rfq_id);
-        // [MIN-3 FIX] Explicitly exclude STATUS_CANCELLED — use refund_stake_cancelled.
-        // Remaining valid states: STATUS_WINNER_SELECTED (3), STATUS_ESCROW_FUNDED (4),
-        // STATUS_COMPLETED (5), STATUS_WINNER_DECLINED (7).
+        // Valid: WINNER_SELECTED(3), ESCROW_FUNDED(4), COMPLETED(5), WINNER_DECLINED(7)
+        // Excluded: CANCELLED(6) — use refund_stake_cancelled instead
         assert(status >= STATUS_WINNER_SELECTED);
         assert(status != STATUS_CANCELLED);
 
         let owner: address = Mapping::get(bid_owner, unique_bid_key);
         assert_eq(owner, caller);
 
-        // Must not be the winner's bid key — winner uses release_winner_stake.
+        // Winner uses release_winner_stake — excluded here
         let winner_key: field = Mapping::get(winner_bids, rfq_id);
         assert(unique_bid_key != winner_key);
-
-        // [CRIT-3 FIX] Revealed guard removed. Unrevealed non-winners who missed
-        // the slash window can reclaim. Stake zeroing below prevents double claims.
 
         let expected_stake: u64 = Mapping::get_or_use(bid_stakes, unique_bid_key, 0u64);
         assert_eq(stake, expected_stake);
         assert(stake > 0u64);
 
-        // Zero before transfer (checks-effects-interactions).
+        // Zero before transfer (checks-effects-interactions pattern)
         Mapping::set(bid_stakes, unique_bid_key, 0u64);
 
         refund_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 20. RELEASE WINNER STAKE (after STATUS_COMPLETED)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 20. RELEASE WINNER STAKE — After STATUS_COMPLETED
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition release_winner_stake(
         public rfq_id: field,
@@ -1491,12 +1391,12 @@ program sealrfq_v9.aleo {
         release_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 21. CLAIM LOCKED WINNER STAKE (escrow timeout — creator never funded)
-    // NOTE: Prefer cancel_rfq_no_escrow (unblocks ALL vendors).
-    // This transition provides a winner-only fallback when other vendors have
-    // already recovered stakes via other paths. Does NOT cancel the RFQ.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 21. CLAIM LOCKED WINNER STAKE — Escrow timeout fallback
+    //
+    // Winner-only path when creator never funded escrow.
+    // Prefer cancel_rfq_no_escrow which unblocks ALL vendors.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition claim_locked_winner_stake(
         public rfq_id: field,
@@ -1540,12 +1440,13 @@ program sealrfq_v9.aleo {
         release_future.await();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 22. CREATOR RECLAIM ESCROW (long recovery timeout)
-    // Moves to STATUS_CANCELLED so all vendors (including winner) recover
-    // stakes via refund_stake_cancelled. Used when delivery never completes
-    // and the creator needs to recover stranded funds after ESCROW_RECOVERY_BLOCKS.
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════════════════
+    // 22. CREATOR RECLAIM ESCROW — Long recovery timeout
+    //
+    // When delivery never completes, creator recovers stranded funds after
+    // ESCROW_RECOVERY_BLOCKS. Moves to STATUS_CANCELLED so all vendors
+    // (including winner) can recover stakes via refund_stake_cancelled.
+    // ═════════════════════════════════════════════════════════════════════
 
     async transition creator_reclaim_escrow(
         public rfq_id:    field,
@@ -1590,7 +1491,6 @@ program sealrfq_v9.aleo {
 
         Mapping::set(escrow_amounts,         rfq_id, 0u64);
         Mapping::set(final_payment_released, rfq_id, true);
-        // STATUS_CANCELLED signals all vendors to use refund_stake_cancelled.
         Mapping::set(rfq_status,             rfq_id, STATUS_CANCELLED);
 
         reclaim_future.await();

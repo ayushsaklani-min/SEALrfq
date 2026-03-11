@@ -18,6 +18,7 @@ import { verifyAleoWalletSignature } from './aleoVerifier';
 // ============================================================================
 
 export type UserRole = 'BUYER' | 'VENDOR' | 'AUDITOR' | 'NEW_USER';
+export type SelectableUserRole = 'BUYER' | 'VENDOR';
 
 export interface AuthSession {
     id: string;
@@ -180,8 +181,9 @@ export class AuthService {
             throw new Error('Refresh token expired');
         }
 
-        // 4. Re-resolve role (may have changed)
-        const role = await this.resolveUserRole(walletAddress);
+        // Preserve explicitly selected buyer/vendor mode across token refreshes.
+        const derivedRole = await this.resolveUserRole(walletAddress);
+        const role = this.resolveRefreshedRole(session.role as UserRole, derivedRole);
 
         // 5. Generate new tokens (rotate refresh token)
         const newSessionId = crypto.randomUUID();
@@ -282,22 +284,22 @@ export class AuthService {
     }
 
     /**
-     * DEV ONLY: Create a new session with an explicitly selected role.
+     * Create a new session with an explicitly selected buyer/vendor mode.
      */
-    async createDevRoleSession(
+    async createRoleSession(
         walletAddress: string,
-        role: UserRole,
+        role: SelectableUserRole,
         currentSessionId: string
     ): Promise<AuthSession> {
-        if (process.env.NODE_ENV === 'production') {
-            throw new Error('Role switching is disabled in production');
-        }
-
         // Revoke current session first.
-        await this.prisma.authSession.updateMany({
+        const revokeResult = await this.prisma.authSession.updateMany({
             where: { id: currentSessionId, walletAddress, isRevoked: false },
             data: { isRevoked: true },
         });
+
+        if (revokeResult.count === 0) {
+            throw new Error('Session not found or already revoked');
+        }
 
         const sessionId = crypto.randomUUID();
         const accessToken = await this.generateAccessToken(walletAddress, role, sessionId);
@@ -363,6 +365,18 @@ export class AuthService {
 
         // 4. Default: new user
         return 'NEW_USER';
+    }
+
+    private resolveRefreshedRole(currentRole: UserRole, derivedRole: UserRole): UserRole {
+        if (currentRole === 'BUYER' || currentRole === 'VENDOR') {
+            return currentRole;
+        }
+
+        if (currentRole === 'AUDITOR') {
+            return derivedRole === 'AUDITOR' ? 'AUDITOR' : 'NEW_USER';
+        }
+
+        return derivedRole;
     }
 
     /**

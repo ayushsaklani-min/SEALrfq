@@ -1,19 +1,12 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { Twitter, Youtube, MessageCircle, Mail, ExternalLink, MapPin, Shield, Lock } from 'lucide-react';
+import { ExternalLink, MapPin, Lock } from 'lucide-react';
 import { footerConfig } from '@/config';
 
 gsap.registerPlugin(ScrollTrigger);
-
-const SOCIAL_ICON_MAP = {
-  instagram: Shield,
-  twitter: Twitter,
-  youtube: Youtube,
-  music: MessageCircle,
-};
 
 interface FooterProps {
   onConnect?: () => void | Promise<void>;
@@ -29,7 +22,6 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
   const sectionRef = useRef<HTMLDivElement>(null);
   const portraitRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
-  const [hoveredImage, setHoveredImage] = useState<number | null>(null);
   const scrollTriggerRefs = useRef<ScrollTrigger[]>([]);
 
   useEffect(() => {
@@ -62,12 +54,6 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
       scrollTriggerRefs.current = [];
     };
   }, []);
-
-  const handleContactClick = () => {
-    if (footerConfig.subscribeAlertMessage) {
-      alert(footerConfig.subscribeAlertMessage);
-    }
-  };
 
   return (
     <section
@@ -136,7 +122,7 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
 
         <div className="max-w-7xl mx-auto">
           {/* Footer grid - Main content */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-20">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 mb-20">
             {/* Brand */}
             <div>
               <div className="flex items-center gap-3 mb-6">
@@ -148,22 +134,6 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
               <p className="text-sm text-[#A7ACB8]/60 leading-relaxed mb-6">
                 {footerConfig.brandDescription}
               </p>
-              {/* Social links */}
-              <div className="flex gap-4">
-                {footerConfig.socialLinks.map((social) => {
-                  const IconComponent = SOCIAL_ICON_MAP[social.icon];
-                  return (
-                    <a
-                      key={social.label}
-                      href={social.href}
-                      className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center text-[#A7ACB8]/60 hover:text-[#39F2AE] hover:border-[#39F2AE]/50 transition-colors"
-                      aria-label={social.label}
-                    >
-                      <IconComponent className="w-4 h-4" />
-                    </a>
-                  );
-                })}
-              </div>
             </div>
 
             {/* Quick Links */}
@@ -173,12 +143,14 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
               </h4>
               <ul className="space-y-3">
                 {footerConfig.quickLinks.map((link) => (
-                  <li key={link}>
+                  <li key={link.label}>
                     <a
-                      href="#"
+                      href={link.href}
+                      target="_blank"
+                      rel="noreferrer"
                       className="text-sm text-[#A7ACB8]/50 hover:text-[#39F2AE] transition-colors flex items-center gap-2 group"
                     >
-                      <span>{link}</span>
+                      <span>{link.label}</span>
                       <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                     </a>
                   </li>
@@ -192,15 +164,6 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
                 {footerConfig.contactTitle}
               </h4>
               <ul className="space-y-4">
-                <li className="flex items-start gap-3">
-                  <Mail className="w-4 h-4 text-[#39F2AE]/60 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-[#A7ACB8]/50">{footerConfig.emailLabel}</p>
-                    <a href={`mailto:${footerConfig.email}`} className="text-sm text-[#F4F6FA] hover:text-[#39F2AE] transition-colors">
-                      {footerConfig.email}
-                    </a>
-                  </div>
-                </li>
                 <li className="flex items-start gap-3">
                   <ExternalLink className="w-4 h-4 text-[#39F2AE]/60 mt-0.5" />
                   <div>
@@ -216,29 +179,6 @@ const Footer = ({ onConnect, connecting = false }: FooterProps) => {
                   </div>
                 </li>
               </ul>
-            </div>
-
-            {/* Newsletter */}
-            <div>
-              <h4 className="font-display text-sm uppercase tracking-wider text-[#F4F6FA] mb-6">
-                {footerConfig.newsletterTitle}
-              </h4>
-              <p className="text-sm text-[#A7ACB8]/50 mb-4">
-                {footerConfig.newsletterDescription}
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="email"
-                  placeholder="your@email.com"
-                  className="flex-grow px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm text-[#F4F6FA] placeholder:text-white/30 focus:outline-none focus:border-[#39F2AE]/50"
-                />
-                <button
-                  onClick={handleContactClick}
-                  className="px-4 py-3 bg-[#39F2AE]/20 text-[#39F2AE] rounded-lg text-sm font-medium hover:bg-[#39F2AE]/30 transition-colors"
-                >
-                  {footerConfig.newsletterButtonText}
-                </button>
-              </div>
             </div>
           </div>
 

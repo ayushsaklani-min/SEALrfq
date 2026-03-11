@@ -243,6 +243,11 @@ export interface SocialLink {
   href: string;
 }
 
+export interface FooterQuickLink {
+  label: string;
+  href: string;
+}
+
 export interface FooterConfig {
   portraitImage: string;
   portraitAlt: string;
@@ -254,7 +259,7 @@ export interface FooterConfig {
   brandName: string;
   brandDescription: string;
   quickLinksTitle: string;
-  quickLinks: string[];
+  quickLinks: FooterQuickLink[];
   contactTitle: string;
   emailLabel: string;
   email: string;
@@ -283,25 +288,26 @@ export const footerConfig: FooterConfig = {
   brandName: "SealRFQ",
   brandDescription: "The world's first zero-knowledge RFQ platform. Built on Aleo's privacy-first blockchain.",
   quickLinksTitle: "Quick Links",
-  quickLinks: ["Product", "Security", "Use Cases", "Documentation", "Pricing"],
+  quickLinks: [
+    {
+      label: "Documentation",
+      href: "https://docs.google.com/document/d/1qirTHcNsSpZDk4yQJJjhS7UFis4TQ9Pe/edit?pli=1",
+    },
+  ],
   contactTitle: "Contact",
   emailLabel: "Email",
   email: "hello@sealrfq.io",
   phoneLabel: "Support",
-  phone: "docs.sealrfq.io",
+  phone: "Documentation",
   addressLabel: "Network",
-  address: "Aleo Testnet → Mainnet",
-  newsletterTitle: "Stay Updated",
-  newsletterDescription: "Get the latest on zero-knowledge procurement.",
-  newsletterButtonText: "Subscribe",
-  subscribeAlertMessage: "Thanks for subscribing! We'll keep you updated.",
+  address: "Aleo Mainnet",
+  newsletterTitle: "",
+  newsletterDescription: "",
+  newsletterButtonText: "",
+  subscribeAlertMessage: "",
   copyrightText: "© 2026 SealRFQ. All rights reserved.",
   bottomLinks: ["Privacy Policy", "Terms of Service", "Cookie Policy"],
-  socialLinks: [
-    { icon: "twitter", label: "Twitter", href: "https://twitter.com/sealrfq" },
-    { icon: "youtube", label: "YouTube", href: "https://youtube.com/sealrfq" },
-    { icon: "music", label: "Discord", href: "https://discord.gg/sealrfq" },
-  ],
+  socialLinks: [],
   galleryImages: [
     { id: 1, src: "/images/cube-1.jpg" },
     { id: 2, src: "/images/cube-2.jpg" },

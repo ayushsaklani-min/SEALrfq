@@ -44,8 +44,8 @@ const LogoutAllRequestSchema = z.object({
     walletAddress: z.string().startsWith('aleo1'),
 });
 
-const DevSwitchRoleSchema = z.object({
-    role: z.enum(['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']),
+const SwitchRoleSchema = z.object({
+    role: z.enum(['BUYER', 'VENDOR']),
 });
 
 function clearAuthCookies(response: NextResponse): NextResponse {
@@ -289,17 +289,10 @@ export async function handleMe(request: NextRequest): Promise<NextResponse> {
 }
 
 // ============================================================================
-// POST /api/auth/dev/switch-role (development only)
+// POST /api/auth/dev/switch-role
 // ============================================================================
 
 export async function handleDevSwitchRole(request: NextRequest): Promise<NextResponse> {
-    if (isProductionEnv) {
-        return NextResponse.json(
-            { status: 'error', error: { code: 'AUTH_ERROR', message: 'Not available in production' } },
-            { status: 403 }
-        );
-    }
-
     const authResult = await requireAuth(request);
     if (authResult instanceof NextResponse) {
         return authResult;
@@ -307,9 +300,9 @@ export async function handleDevSwitchRole(request: NextRequest): Promise<NextRes
 
     try {
         const body = await request.json();
-        const { role } = DevSwitchRoleSchema.parse(body);
+        const { role } = SwitchRoleSchema.parse(body);
 
-        const session = await authService.createDevRoleSession(
+        const session = await authService.createRoleSession(
             authResult.walletAddress,
             role,
             authResult.sessionId
