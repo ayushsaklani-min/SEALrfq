@@ -63,12 +63,11 @@ export default function Navbar() {
     return (
         <motion.nav
             initial={{ y: -100 }}
-            animate={{ y: 0 }}
-            transition={{ duration: 0.5 }}
+            animate={{ y: hidden ? '-100%' : 0 }}
+            transition={{ duration: 0.3 }}
             className={cn(
-                "fixed w-full z-50 top-0 start-0 transition-all duration-300 border-b border-white/5",
-                scrolled ? "glass-panel border-white/10" : "bg-transparent border-transparent",
-                hidden ? "-translate-y-full" : "translate-y-0"
+                "fixed w-full z-50 top-0 start-0 border-b border-white/5",
+                scrolled ? "glass-panel border-white/10" : "bg-transparent border-transparent"
             )}
         >
             <div className="max-w-7xl flex flex-wrap items-center justify-between mx-auto p-4">
