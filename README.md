@@ -113,19 +113,17 @@ Platforms like SAP Ariba, Coupa, and Jaggaer digitize procurement workflows — 
 
 **Immediate beachhead:** DAOs, protocol treasuries, and on-chain grant programs already allocate millions through governance processes where intent leaks before execution. SEALrfq gives them sealed bidding with native `credits.aleo` settlement — no bridges, no oracles, no trust assumptions beyond the chain itself.
 
-## Market Validation
+## Market Analysis
 
-**[World Bank](https://www.worldbank.org/en/topic/procurement-for-development)** identifies procurement as a global development crisis:
-- **$9.5 trillion wasted annually** due to inefficiency and corruption in public contracting
-- **Less than 1% of government procurement** reaches women-led businesses, indicating systemic barriers to fair competition
-- Corruption and insider favoritism prevent SMEs and diverse vendors from accessing opportunities
+Procurement corruption research from the [Governance and Social Development Resource Centre](https://gsdrc.org/document-library/corruption-in-public-procurement-causes-consequences-and-cures/) identifies three endemic fraud patterns:
 
-**[SpendNetwork](https://www.spendnetwork.com/13-trillion-the-global-value-of-public-procurement/)** research on global public procurement data:
-- **Only 2.81% of global procurement spend** ($362.8B of $13T) is published as open data
-- **97.19% of contracts remain hidden**, enabling bid shopping, rigging, and information asymmetry
-- Fragmented, inconsistent standards across countries prevent transparency and fair access
+| Corruption Type | How It Happens | SEALrfq Solution |
+|---|---|---|
+| **Bid leakage** | Officials share confidential bid information with preferred bidders | Bid amounts are private ZK inputs; chain stores only BHP256 hashes |
+| **Bid shopping** | Procurement officials limit competitive bids and design specs to favor specific vendors | Uniform stakes + deterministic selection prevents favoritism; any vendor can bid anonymously |
+| **Rigged selection** | "Quality degradation as goods are purchased from best briber, not best bid" | Winner selection happens deterministically in `finalize`; lowest valid bid always wins, verifiable by anyone |
 
-**Core insight:** The procurement market lacks cryptographic guarantees for fairness and privacy. Current platforms (SAP Ariba, Coupa, Jaggaer) can log transactions but cannot prove they didn't leak bids or manipulate winner selection. SEALrfq provides that proof.
+These corruption patterns cost billions annually. The procurement market lacks cryptographic guarantees for fairness and privacy. Current platforms (SAP Ariba, Coupa, Jaggaer) can log transactions but cannot prove they didn't leak bids or manipulate winner selection. **SEALrfq replaces institutional trust with mathematical proof.**
 
 ## Roadmap
 
