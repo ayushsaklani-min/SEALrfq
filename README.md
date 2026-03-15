@@ -7,7 +7,7 @@
 [![Language](https://img.shields.io/badge/Language-Leo-purple)](https://leo-lang.org)
 [![Status](https://img.shields.io/badge/Status-Testnet-orange)](https://github.com)
 
-**[Live Demo](https://sealrfq-frontend.vercel.app/)** | **[Video Walkthrough](https://youtu.be/e5F7DW8OEK0?si=-fYb4kAR4ECwX6El)** | **[sealrfq_v9.aleo](https://testnet.aleoscan.io/program?id=sealrfq_v9.aleo)** | **[sealrfq_v10.aleo](https://testnet.aleoscan.io/program?id=sealrfq_v10.aleo)**
+**[Live Demo](https://sealrfq-frontend.vercel.app/)** | **[Video Walkthrough](https://youtu.be/e5F7DW8OEK0?si=-fYb4kAR4ECwX6El)** | **[sealrfq_v9.aleo](https://testnet.explorer.provable.com/program/sealrfq_v9.aleo)** | **[sealrfq_v10.aleo](https://testnet.explorer.provable.com/program/sealrfq_v10.aleo)**
 
 ## What Is SEALrfq?
 
