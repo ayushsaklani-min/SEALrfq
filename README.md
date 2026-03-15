@@ -115,12 +115,12 @@ Platforms like SAP Ariba, Coupa, and Jaggaer digitize procurement workflows — 
 
 ## Market Validation
 
-**World Bank** identifies procurement as a global development crisis:
+**[World Bank](https://www.worldbank.org/en/topic/procurement-for-development)** identifies procurement as a global development crisis:
 - **$9.5 trillion wasted annually** due to inefficiency and corruption in public contracting
 - **Less than 1% of government procurement** reaches women-led businesses, indicating systemic barriers to fair competition
 - Corruption and insider favoritism prevent SMEs and diverse vendors from accessing opportunities
 
-**SpendNetwork research** on global public procurement data:
+**[SpendNetwork](https://www.spendnetwork.com/13-trillion-the-global-value-of-public-procurement/)** research on global public procurement data:
 - **Only 2.81% of global procurement spend** ($362.8B of $13T) is published as open data
 - **97.19% of contracts remain hidden**, enabling bid shopping, rigging, and information asymmetry
 - Fragmented, inconsistent standards across countries prevent transparency and fair access
