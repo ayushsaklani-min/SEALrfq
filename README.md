@@ -115,15 +115,18 @@ Platforms like SAP Ariba, Coupa, and Jaggaer digitize procurement workflows — 
 
 ## Market Analysis
 
-Procurement corruption research from the [Governance and Social Development Resource Centre](https://gsdrc.org/document-library/corruption-in-public-procurement-causes-consequences-and-cures/) identifies three endemic fraud patterns:
+[World Bank research](https://blogs.worldbank.org/en/developmenttalk/reducing-corruption-public-procurement) estimates **$880 billion is lost to procurement corruption annually** — more than five times global development aid. Their finding: "laws on their own are largely ineffective at reducing the risk of bribery." What matters is how procurement is practiced, not how it is regulated.
 
-| Corruption Type | How It Happens | SEALrfq Solution |
-|---|---|---|
-| **Bid leakage** | Officials share confidential bid information with preferred bidders | Bid amounts are private ZK inputs; chain stores only BHP256 hashes |
-| **Bid shopping** | Procurement officials limit competitive bids and design specs to favor specific vendors | Uniform stakes + deterministic selection prevents favoritism; any vendor can bid anonymously |
-| **Rigged selection** | "Quality degradation as goods are purchased from best briber, not best bid" | Winner selection happens deterministically in `finalize`; lowest valid bid always wins, verifiable by anyone |
+The four practice areas the World Bank identifies as critical map directly to SEALrfq's design:
 
-These corruption patterns cost billions annually. The procurement market lacks cryptographic guarantees for fairness and privacy. Current platforms (SAP Ariba, Coupa, Jaggaer) can log transactions but cannot prove they didn't leak bids or manipulate winner selection. **SEALrfq replaces institutional trust with mathematical proof.**
+| World Bank Recommendation | SEALrfq Implementation |
+|---|---|
+| **Transparency** | Winner selection is deterministic and on-chain; anyone can verify |
+| **Competition** | Any vendor with an Aleo wallet can bid; privacy prevents insider favoritism |
+| **Limits to exclusion** | Permissionless bidding; no gatekeeping by platform operators |
+| **Integrity of contract** | Escrow funded and released through `credits.aleo`; settlement is on-chain, not negotiable |
+
+Current platforms (SAP Ariba, Coupa, Jaggaer) can log transactions but cannot prove they didn't leak bids or manipulate winner selection. **SEALrfq replaces institutional trust with mathematical proof.**
 
 ## Roadmap
 
