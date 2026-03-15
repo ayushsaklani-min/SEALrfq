@@ -7,6 +7,8 @@
 [![Language](https://img.shields.io/badge/Language-Leo-purple)](https://leo-lang.org)
 [![Status](https://img.shields.io/badge/Status-Testnet-orange)](https://github.com)
 
+**[Live Demo](https://sealrfq-frontend.vercel.app/)** | **[Video Walkthrough](https://youtu.be/e5F7DW8OEK0?si=-fYb4kAR4ECwX6El)** | **[sealrfq_v9.aleo](https://testnet.aleoscan.io/program?id=sealrfq_v9.aleo)** | **[sealrfq_v10.aleo](https://testnet.aleoscan.io/program?id=sealrfq_v10.aleo)**
+
 ## What Is SEALrfq?
 
 SEALrfq (Sealed Encrypted Auction Ledger for Requests for Quotation) is a trustless sealed-bid procurement protocol built on Aleo's zero-knowledge infrastructure.
