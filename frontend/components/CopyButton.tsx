@@ -6,7 +6,6 @@ import { cn } from '@/lib/utils';
 
 interface Props {
     text: string;
-    /** If provided, show this truncated label instead of full text */
     label?: string;
     className?: string;
     iconOnly?: boolean;
@@ -22,7 +21,6 @@ export default function CopyButton({ text, label, className, iconOnly = false }:
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch {
-            // fallback for older browsers
             const el = document.createElement('textarea');
             el.value = text;
             el.style.position = 'fixed';
@@ -42,8 +40,8 @@ export default function CopyButton({ text, label, className, iconOnly = false }:
                 onClick={handleCopy}
                 title={copied ? 'Copied!' : `Copy: ${text}`}
                 className={cn(
-                    'inline-flex items-center justify-center w-6 h-6 rounded-md text-white/40 hover:text-cyan-400 hover:bg-white/5 transition-colors',
-                    copied && 'text-green-400',
+                    'inline-flex items-center justify-center w-6 h-6 rounded-md text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))] hover:bg-[hsl(var(--secondary))] transition-colors',
+                    copied && 'text-emerald-400',
                     className,
                 )}
             >
@@ -60,9 +58,9 @@ export default function CopyButton({ text, label, className, iconOnly = false }:
             title={copied ? 'Copied!' : text}
             className={cn(
                 'inline-flex items-center gap-1.5 font-mono text-sm rounded-lg px-2 py-0.5',
-                'text-white/70 hover:text-cyan-400 hover:bg-white/5 border border-transparent hover:border-white/10',
+                'text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))] hover:bg-[hsl(var(--secondary))] border border-transparent hover:border-[hsl(var(--border))]',
                 'transition-all duration-150',
-                copied && 'text-green-400 border-green-500/20 bg-green-500/5',
+                copied && 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5',
                 className,
             )}
         >

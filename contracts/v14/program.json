@@ -1,0 +1,28 @@
+{
+    "program": "sealrfq_v17.aleo",
+    "version": "1.0.0",
+    "description": "SealRFQ V17 - Sealed-bid RFQ with multi-token escrow (Credits + USDCx + USAD) and private payment layer",
+    "license": "MIT",
+    "leo": "3.5.0",
+    "dependencies": [
+        {
+            "name": "credits.aleo",
+            "location": "network",
+            "path": null,
+            "edition": null
+        },
+        {
+            "name": "test_usdcx_stablecoin.aleo",
+            "location": "network",
+            "path": null,
+            "edition": null
+        },
+        {
+            "name": "test_usad_stablecoin.aleo",
+            "location": "network",
+            "path": null,
+            "edition": null
+        }
+    ],
+    "dev_dependencies": null
+}

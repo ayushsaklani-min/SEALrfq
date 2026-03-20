@@ -1,4 +1,3 @@
-
 'use client';
 
 import Link from 'next/link';
@@ -8,65 +7,27 @@ import { useWallet } from '@/contexts/WalletContext';
 export default function Footer() {
     const pathname = usePathname();
     const { walletAddress } = useWallet();
-    const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
 
-    // Hide Footer on landing page if not connected
-    if (!walletAddress && pathname === '/') {
-        return null;
-    }
+    if (!walletAddress && pathname === '/') return null;
 
     return (
-        <footer className="w-full border-t border-white/5 bg-black text-white mt-auto">
-            <div className="max-w-7xl mx-auto p-8 md:py-12">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-                    <div className="col-span-1 md:col-span-1">
-                        <Link href="/" className="flex items-center space-x-2 mb-4 group">
-                            <div className="relative w-10 h-10 transition-transform duration-300 group-hover:scale-105">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src="/logo.png" alt="SealRFQ Logo" className="w-full h-full object-contain" />
-                            </div>
-                            <span className="self-center text-xl font-bold whitespace-nowrap dark:text-white font-display tracking-tight">
-                                Seal<span className="text-primary-500">RFQ</span>
-                            </span>
-                        </Link>
-                        <p className="text-sm text-gray-500 mb-4">
-                            Secure, privacy-preserving Request for Quote platform built on Aleo.
-                        </p>
-                    </div>
-
-                    <div>
-                        <h3 className="font-semibold text-gray-300 mb-4 uppercase text-xs tracking-wider">Platform</h3>
-                        <ul className="space-y-2 text-sm text-gray-500">
-                            <li><Link href="/" className="hover:text-primary-400 transition-colors">Home</Link></li>
-                            <li><Link href="/escrow" className="hover:text-primary-400 transition-colors">Escrow</Link></li>
-                            <li><Link href="/audit" className="hover:text-primary-400 transition-colors">Audit</Link></li>
-                        </ul>
-                    </div>
-
-                    <div>
-                        <h3 className="font-semibold text-gray-300 mb-4 uppercase text-xs tracking-wider">Legal</h3>
-                        <ul className="space-y-2 text-sm text-gray-500">
-                            <li><Link href="/privacy" className="hover:text-primary-400 transition-colors">Privacy Policy</Link></li>
-                            <li><Link href="/terms" className="hover:text-primary-400 transition-colors">Terms of Service</Link></li>
-                        </ul>
-                    </div>
-
-                    <div>
-                        <h3 className="font-semibold text-gray-300 mb-4 uppercase text-xs tracking-wider">Build</h3>
-                        <ul className="space-y-2 text-sm text-gray-500">
-                            <li><span>Backend API on Render</span></li>
-                            <li><span>Frontend on Vercel</span></li>
-                            <li><span>{demoMode ? 'Demo mode enabled' : 'Testnet mode enabled'}</span></li>
-                        </ul>
-                    </div>
+        <footer className="mt-auto border-t border-[hsl(var(--border))]">
+            <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-5 text-sm text-[hsl(var(--muted-foreground))] sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                    <span className="font-medium text-white">SealRFQ</span>
+                    <span>Private procurement on Aleo</span>
                 </div>
-
-                <div className="border-t border-white/5 mt-8 pt-8 flex flex-col md:flex-row justify-between items-center text-sm text-gray-600">
-                    <span>&copy; {new Date().getFullYear()} SealRFQ. All rights reserved.</span>
-                    <div className="flex items-center gap-4 mt-4 md:mt-0">
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                        <span>{demoMode ? 'Demo Systems Ready' : 'Testnet Systems Ready'}</span>
+                <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                        <span>Testnet</span>
                     </div>
+                    <Link href="/privacy" className="transition-colors hover:text-white">
+                        Privacy
+                    </Link>
+                    <Link href="/terms" className="transition-colors hover:text-white">
+                        Terms
+                    </Link>
                 </div>
             </div>
         </footer>

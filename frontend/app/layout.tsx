@@ -1,7 +1,8 @@
 import './globals.css';
 import { WalletProvider } from '@/contexts/WalletContext';
+import { ToastProvider } from '@/components/Toast';
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono, Inter, Sora } from 'next/font/google';
+import { Inter } from 'next/font/google';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import WalletErrorModal from '@/components/WalletErrorModal';
@@ -11,22 +12,10 @@ const inter = Inter({
   variable: '--font-body',
   display: 'swap',
 });
-const sora = Sora({
-  subsets: ['latin'],
-  weight: ['400', '600', '700', '800'],
-  variable: '--font-display',
-  display: 'swap',
-});
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
-  variable: '--font-mono',
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
-  title: 'SealRFQ - Secure On-Chain Bidding',
-  description: 'A privacy-preserving Request for Quote platform built on Aleo.',
+  title: 'SealRFQ - Private Procurement on Aleo',
+  description: 'Zero-knowledge sealed-bid procurement platform. Create RFQs, bid privately, settle on-chain.',
 };
 
 export default function RootLayout({
@@ -36,17 +25,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body
-        className={`${inter.variable} ${sora.variable} ${ibmPlexMono.variable} font-sans bg-black text-cyan-400 min-h-screen flex flex-col`}
-      >
-        <div className="neon-grid" />
+      <body className={`${inter.variable} font-sans min-h-screen flex flex-col`}>
         <WalletProvider>
-          <Navbar />
-          <WalletErrorModal />
-          <main className="flex-grow pt-20 relative z-10">
-            {children}
-          </main>
-          <Footer />
+          <ToastProvider>
+            <Navbar />
+            <WalletErrorModal />
+            <main className="flex-grow pt-16 relative z-10">
+              {children}
+            </main>
+            <Footer />
+          </ToastProvider>
         </WalletProvider>
       </body>
     </html>

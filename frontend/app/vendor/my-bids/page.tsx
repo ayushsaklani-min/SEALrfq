@@ -1,373 +1,342 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { authenticatedFetch } from '@/lib/authFetch';
-import { TxStatusView } from '@/components/TxStatus';
-import { walletFirstTx } from '@/lib/walletTx';
-import ConfirmDialog from '@/components/ConfirmDialog';
-import CopyButton from '@/components/CopyButton';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import DeadlineCountdown from '@/components/DeadlineCountdown';
+import { TxStatusView } from '@/components/TxStatus';
+import { Button } from '@/components/ui/Button';
+import {
+    ActionBar,
+    DataGrid,
+    DataPoint,
+    EmptyState,
+    Notice,
+    PageHeader,
+    PageShell,
+    Panel,
+    PricingChip,
+    RecordsPanel,
+    StatusChip,
+    TokenChip,
+} from '@/components/protocol/ProtocolPrimitives';
+import { authenticatedFetch } from '@/lib/authFetch';
+import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import { formatAmount, PRICING_MODE, TIMING } from '@/lib/sealProtocol';
+import { walletFirstTx } from '@/lib/walletTx';
+import { useProtocolStore } from '@/stores/protocolStore';
 
-type Bid = {
+type VendorBid = {
     id: string;
     rfqId: string;
     stake: string;
     isWinner?: boolean;
     isRevealed: boolean;
-    revealedAmount: string | null;
-    createdBlock: number;
+    isRefunded?: boolean;
+    revealedAmount?: string | null;
     rfqStatus?: string | null;
     revealDeadline?: number | null;
-    winnerAccepted?: boolean | null;
+    biddingDeadline?: number | null;
+    tokenType?: number;
+    pricingMode?: number;
+    paid?: boolean;
+    winnerAccepted?: boolean;
 };
 
 type OpenRfq = {
     id: string;
+    itemName?: string | null;
     status: string;
+    tokenType: number;
+    pricingMode: number;
     minBid: string;
     biddingDeadline: number;
-    revealDeadline: number;
-    itemName?: string | null;
-    description?: string | null;
-    quantity?: string | null;
-    unit?: string | null;
 };
 
-function microToAleo(microcredits: string): string {
-    try {
-        const n = BigInt(microcredits);
-        const whole = n / 1_000_000n;
-        const frac = n % 1_000_000n;
-        if (frac === 0n) return `${whole} ALEO`;
-        const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '');
-        return `${whole}.${fracStr} ALEO`;
-    } catch {
-        return microcredits;
+function canClaimStake(bid: VendorBid, currentBlock: number | null) {
+    if (bid.isRefunded) return false;
+    if (bid.rfqStatus === 'CANCELLED') return true;
+    if (bid.isWinner) return false;
+    if (bid.rfqStatus === 'WINNER_SELECTED' || bid.rfqStatus === 'ESCROW_FUNDED' || bid.rfqStatus === 'COMPLETED' || bid.rfqStatus === 'WINNER_DECLINED') {
+        return true;
     }
+    if (bid.rfqStatus === 'REVEAL' && currentBlock !== null && bid.revealDeadline && currentBlock > bid.revealDeadline + TIMING.SLASH_WINDOW) {
+        return true;
+    }
+    return false;
 }
 
 export default function VendorMyBidsPage() {
-    const router = useRouter();
-    const [bids, setBids] = useState<Bid[]>([]);
+    const protocolState = useProtocolStore((state) => ({
+        records: state.records,
+        winnerCertificate: state.winnerCertificate,
+    }));
+    const [bids, setBids] = useState<VendorBid[]>([]);
     const [openRfqs, setOpenRfqs] = useState<OpenRfq[]>([]);
-    const [rfqIdInput, setRfqIdInput] = useState('');
+    const [currentBlock, setCurrentBlock] = useState<number | null>(null);
+    const [txKey, setTxKey] = useState<string | null>(null);
+    const [proofMessage, setProofMessage] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [forbidden, setForbidden] = useState(false);
-    const [currentRole, setCurrentRole] = useState<string | null>(null);
-    const [acceptingBidId, setAcceptingBidId] = useState<string | null>(null);
-    const [acceptTxKeys, setAcceptTxKeys] = useState<Record<string, string>>({});
-    const [confirmAcceptBid, setConfirmAcceptBid] = useState<Bid | null>(null);
+    const [acting, setActing] = useState(false);
 
     useEffect(() => {
-        setCurrentRole(localStorage.getItem('role'));
-
+        let cancelled = false;
         const load = async () => {
             try {
-                const [bidsRes, openRfqsRes] = await Promise.all([
+                const [bidsResponse, openRfqsResponse, blockHeight] = await Promise.all([
                     authenticatedFetch('/api/bid/my-bids'),
                     authenticatedFetch('/api/rfq/open'),
+                    fetchCurrentBlockHeight(),
                 ]);
+                const bidsPayload = await bidsResponse.json();
+                const openRfqsPayload = await openRfqsResponse.json().catch(() => ({ data: [] }));
 
-                const [bidsJson, openRfqsJson] = await Promise.all([
-                    bidsRes.json(),
-                    openRfqsRes.json(),
-                ]);
-
-                if (!bidsRes.ok) {
-                    if (bidsRes.status === 401) {
-                        localStorage.removeItem('walletAddress');
-                        localStorage.removeItem('role');
-                        router.push('/');
-                        return;
-                    }
-                    if (bidsRes.status === 403) {
-                        setForbidden(true);
-                    }
-                    throw new Error(bidsJson?.error?.message || 'Failed to load bids');
+                if (!bidsResponse.ok) {
+                    throw new Error(bidsPayload?.error?.message || 'Failed to load bids.');
                 }
-
-                if (!openRfqsRes.ok) {
-                    throw new Error(openRfqsJson?.error?.message || 'Failed to load open RFQs');
+                if (!cancelled) {
+                    setBids(bidsPayload.data || []);
+                    setOpenRfqs((openRfqsPayload.data || []).filter((rfq: OpenRfq) => rfq.status === 'OPEN'));
+                    setCurrentBlock(blockHeight);
                 }
-
-                setBids(bidsJson.data || []);
-                setOpenRfqs(openRfqsJson.data || []);
-            } catch (e: any) {
-                setError(e.message);
+            } catch (caught: any) {
+                if (!cancelled) setError(caught?.message || 'Failed to load vendor workspace.');
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
 
         load();
-    }, [router]);
+        const intervalId = window.setInterval(load, 15000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(intervalId);
+        };
+    }, []);
 
-    const handleAcceptAward = async (bid: Bid) => {
-        if (acceptingBidId === bid.id) return;
-        setConfirmAcceptBid(null);
-        setAcceptingBidId(bid.id);
+    const respondToAward = async (bid: VendorBid, accept: boolean) => {
+        setActing(true);
         setError(null);
-
         try {
             const result = await walletFirstTx(
-                `/api/rfq/${encodeURIComponent(bid.rfqId)}/winner-accept`,
-                {},
-                (_prepareData, txHash) => ({ txHash }),
+                `/api/rfq/${encodeURIComponent(bid.rfqId)}/winner-respond`,
+                { accept },
+                (_prepareData, txHash) => ({ accept, txHash }),
             );
-            setAcceptTxKeys((prev) => ({ ...prev, [bid.id]: result.idempotencyKey }));
-        } catch (e: any) {
-            setError(e?.message || 'Failed to accept award');
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to submit winner response.');
         } finally {
-            setAcceptingBidId((current) => (current === bid.id ? null : current));
+            setActing(false);
         }
     };
 
-    if (loading) return <div className="p-8 text-gray-400">Loading vendor dashboard...</div>;
+    const claimStake = async (bid: VendorBid) => {
+        setActing(true);
+        setError(null);
+        try {
+            const result = await walletFirstTx(
+                `/api/rfq/${encodeURIComponent(bid.rfqId)}/claim-stake`,
+                { bidId: bid.id, stake: bid.stake },
+                (_prepareData, txHash) => ({ bidId: bid.id, stake: bid.stake, txHash }),
+            );
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to claim stake.');
+        } finally {
+            setActing(false);
+        }
+    };
 
-    if (forbidden) {
+    const proveWin = (bid: VendorBid) => {
+        const localCertificate =
+            protocolState.records.find((record) => record.type === 'WinnerCertificate' && record.rfqId === bid.rfqId) ||
+            (protocolState.winnerCertificate as { rfqId?: string } | null);
+
+        if (localCertificate && 'rfqId' in localCertificate && localCertificate.rfqId === bid.rfqId) {
+            setProofMessage(`Local proof check succeeded for RFQ ${bid.rfqId}.`);
+            return;
+        }
+
+        setProofMessage('No local WinnerCertificate is cached for this RFQ yet.');
+    };
+
+    const wonCount = useMemo(() => bids.filter((bid) => bid.isWinner).length, [bids]);
+    const revealCount = useMemo(() => bids.filter((bid) => !bid.isRevealed).length, [bids]);
+    const refundCount = useMemo(() => bids.filter((bid) => canClaimStake(bid, currentBlock)).length, [bids, currentBlock]);
+
+    if (loading) {
         return (
-            <div className="max-w-3xl mx-auto py-12 px-4">
-                <div className="glass p-6 rounded-2xl border border-red-500/20">
-                    <h1 className="text-2xl font-bold mb-3">Vendor Access Required</h1>
-                    <p className="text-gray-300 mb-2">This page is only available for wallets with `VENDOR` role.</p>
-                    <p className="text-gray-400 mb-5 text-sm">Current role: {currentRole || 'unknown'}</p>
-                    <button
-                        className="px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700"
-                        onClick={() => router.push('/buyer/rfqs')}
-                    >
-                        Go To Buyer Dashboard
-                    </button>
-                </div>
-            </div>
+            <PageShell>
+                <Panel title="Loading vendor workspace">
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Fetching open RFQs and your bids.</div>
+                </Panel>
+            </PageShell>
         );
     }
 
-    if (error && bids.length === 0 && openRfqs.length === 0) {
-        return <div className="p-8 text-red-400">{error}</div>;
-    }
-
     return (
-        <div className="max-w-6xl mx-auto py-10 px-4 space-y-6">
-            {error ? (
-                <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
-                    {error}
-                </div>
-            ) : null}
-            <div>
-                <h1 className="text-3xl font-bold mb-2">Vendor Dashboard</h1>
-                <p className="text-gray-400">
-                    Browse open RFQs and manage the bids you have already committed.
-                </p>
-            </div>
+        <PageShell className="space-y-6">
+            <PageHeader
+                eyebrow="Vendor"
+                title="My bids"
+                description="See what needs action now: commit, reveal, respond, or claim stake."
+            />
 
-            {/* ── Open RFQs ─────────────────────────────────────── */}
-            <div className="glass p-5 rounded-2xl border border-white/10">
-                <h2 className="text-xl font-semibold mb-3">Open RFQs</h2>
-                <p className="text-sm text-gray-400 mb-4">
-                    Browse and bid on live procurement requests below.
-                </p>
+            {error ? <Notice tone="danger">{error}</Notice> : null}
+            {proofMessage ? <Notice title="Proof of win">{proofMessage}</Notice> : null}
 
-                {openRfqs.length === 0 ? (
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-gray-300">
-                        No open RFQs are available right now.
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        {openRfqs.map((rfq) => (
-                            <div key={rfq.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                                <div className="flex items-start justify-between gap-3 mb-3">
-                                    <div className="min-w-0">
-                                        <p className="text-lg font-semibold text-white">
-                                            {rfq.itemName || 'Untitled RFQ'}
-                                        </p>
-                                        <div className="flex items-center gap-1 mt-0.5">
-                                            <CopyButton text={rfq.id} />
+            <DataGrid columns={3}>
+                <DataPoint label="Open RFQs" value={openRfqs.length} />
+                <DataPoint label="Need reveal" value={revealCount} />
+                <DataPoint label="Won" value={wonCount} />
+                <DataPoint label="Claimable stakes" value={refundCount} />
+            </DataGrid>
+
+            <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <div className="space-y-6">
+                    <Panel title="Open RFQs">
+                        {openRfqs.length === 0 ? (
+                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No open RFQs right now.</div>
+                        ) : (
+                            <div className="space-y-3">
+                                {openRfqs.map((rfq) => (
+                                    <div key={rfq.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
+                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                            <div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <StatusChip status={rfq.status} />
+                                                    <TokenChip tokenType={rfq.tokenType} />
+                                                    <PricingChip pricingMode={rfq.pricingMode} />
+                                                </div>
+                                                <div className="mt-3 text-base font-semibold text-white">{rfq.itemName || 'Untitled RFQ'}</div>
+                                                <div className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">{formatAmount(rfq.minBid, rfq.tokenType)} minimum</div>
+                                            </div>
+                                            <ActionBar>
+                                                {rfq.pricingMode === PRICING_MODE.RFQ ? (
+                                                    <Link href={`/vendor/bid/${encodeURIComponent(rfq.id)}`}>
+                                                        <Button size="sm">Commit bid</Button>
+                                                    </Link>
+                                                ) : (
+                                                    <Link href={rfq.pricingMode === PRICING_MODE.VICKREY ? '/auctions/vickrey' : '/auctions/dutch'}>
+                                                        <Button size="sm" variant="secondary">Open auction</Button>
+                                                    </Link>
+                                                )}
+                                            </ActionBar>
+                                        </div>
+                                        <div className="mt-3">
+                                            <DeadlineCountdown deadlineBlock={rfq.biddingDeadline} label="Bidding deadline" passedLabel="Bidding closed" />
                                         </div>
                                     </div>
-                                    <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-                                        {rfq.status}
-                                    </span>
-                                </div>
-
-                                <div className="space-y-1.5 text-sm text-gray-300 mb-3">
-                                    {rfq.quantity && (
-                                        <p>Qty: {rfq.quantity}{rfq.unit ? ` ${rfq.unit}` : ''}</p>
-                                    )}
-                                    <p>Min bid: <span className="text-white font-medium">{microToAleo(rfq.minBid)}</span></p>
-                                    {rfq.description && (
-                                        <p className="text-gray-400 line-clamp-2">{rfq.description}</p>
-                                    )}
-                                </div>
-
-                                <div className="mb-3 space-y-2">
-                                    <DeadlineCountdown
-                                        deadlineBlock={rfq.biddingDeadline}
-                                        label="Bidding closes in"
-                                        passedLabel="Bidding deadline passed"
-                                    />
-                                </div>
-
-                                <button
-                                    className="w-full px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-sm"
-                                    onClick={() => router.push(`/vendor/bid/${encodeURIComponent(rfq.id)}`)}
-                                >
-                                    Bid On This RFQ
-                                </button>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                )}
-            </div>
+                        )}
+                    </Panel>
 
-            {/* ── Open by RFQ ID ───────────────────────────────── */}
-            <div className="glass p-5 rounded-2xl border border-white/10">
-                <h2 className="text-xl font-semibold mb-3">Open By RFQ ID</h2>
-                <p className="text-sm text-gray-400 mb-4">
-                    Use this if a buyer shares an RFQ ID directly with you.
-                </p>
-                <div className="flex flex-col md:flex-row gap-3">
-                    <input
-                        type="text"
-                        value={rfqIdInput}
-                        onChange={(e) => setRfqIdInput(e.target.value)}
-                        placeholder="e.g. 1773066236219field"
-                        className="flex-1 p-3 rounded-xl bg-black/40 border border-white/10 font-mono text-sm"
-                    />
-                    <button
-                        className="px-4 py-3 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50"
-                        disabled={!rfqIdInput.trim()}
-                        onClick={() => router.push(`/vendor/bid/${encodeURIComponent(rfqIdInput.trim())}`)}
-                    >
-                        Open Bid Form
-                    </button>
+                    <Panel title="Your bids">
+                        {bids.length === 0 ? (
+                            <EmptyState
+                                title="No bids yet"
+                                description="Commit a sealed bid on an open RFQ or participate in an auction."
+                                actionHref="/auctions"
+                                actionLabel="Browse auctions"
+                            />
+                        ) : (
+                            <div className="space-y-3">
+                                {bids.map((bid) => (
+                                    <div key={bid.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
+                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                            <div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    {bid.rfqStatus ? <StatusChip status={bid.rfqStatus} /> : null}
+                                                    <TokenChip tokenType={bid.tokenType ?? 0} />
+                                                    <PricingChip pricingMode={bid.pricingMode ?? 0} />
+                                                </div>
+                                                <div className="mt-3 text-base font-semibold text-white">{bid.rfqId}</div>
+                                                <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{bid.id}</div>
+                                            </div>
+                                            <div className="text-sm text-[hsl(var(--muted-foreground))] lg:text-right">
+                                                <div>Stake: {formatAmount(bid.stake, 0)}</div>
+                                                <div>{bid.revealedAmount ? `Bid: ${formatAmount(bid.revealedAmount, bid.tokenType ?? 0)}` : bid.isRevealed ? 'Revealed' : 'Not revealed yet'}</div>
+                                                {bid.isWinner ? <div className="font-medium text-emerald-300">Winner</div> : null}
+                                            </div>
+                                        </div>
+
+                                        {!bid.isRevealed && bid.revealDeadline ? (
+                                            <div className="mt-3">
+                                                <DeadlineCountdown deadlineBlock={bid.revealDeadline} label="Reveal deadline" passedLabel="Reveal closed" />
+                                            </div>
+                                        ) : null}
+
+                                        <ActionBar className="mt-3">
+                                            {!bid.isRevealed && bid.pricingMode === PRICING_MODE.RFQ ? (
+                                                <Link href={`/vendor/reveal/${encodeURIComponent(bid.id)}`}>
+                                                    <Button size="sm" variant="secondary">Reveal</Button>
+                                                </Link>
+                                            ) : null}
+
+                                            {bid.isWinner && bid.rfqStatus === 'WINNER_SELECTED' && !bid.winnerAccepted ? (
+                                                <>
+                                                    <Button size="sm" onClick={() => respondToAward(bid, true)} isLoading={acting}>
+                                                        Accept
+                                                    </Button>
+                                                    <Button size="sm" variant="danger" onClick={() => respondToAward(bid, false)} isLoading={acting}>
+                                                        Decline
+                                                    </Button>
+                                                </>
+                                            ) : null}
+
+                                            {canClaimStake(bid, currentBlock) ? (
+                                                <Button size="sm" variant="secondary" onClick={() => claimStake(bid)} isLoading={acting}>
+                                                    Claim stake
+                                                </Button>
+                                            ) : null}
+
+                                            {bid.isWinner ? (
+                                                <>
+                                                    <Button size="sm" variant="secondary" onClick={() => proveWin(bid)}>
+                                                        Proof of win
+                                                    </Button>
+                                                    <Link href={`/escrow/${encodeURIComponent(bid.rfqId)}`}>
+                                                        <Button size="sm" variant="secondary">Escrow</Button>
+                                                    </Link>
+                                                </>
+                                            ) : null}
+                                        </ActionBar>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </Panel>
+
+                    {txKey ? (
+                        <Panel title="Latest transaction">
+                            <TxStatusView idempotencyKey={txKey} compact={true} />
+                        </Panel>
+                    ) : null}
+                </div>
+
+                <div className="space-y-6">
+                    <Panel title="Saved records">
+                        <RecordsPanel
+                            records={protocolState.records.map((record) => ({
+                                id: record.id,
+                                type: record.type,
+                                rfqId: record.rfqId,
+                                createdAt: record.createdAt,
+                            }))}
+                        />
+                    </Panel>
+
+                    <Panel title="Quick reminders">
+                        <div className="space-y-2 text-sm text-[hsl(var(--muted-foreground))]">
+                            <div>Reveal starts automatically after bidding closes.</div>
+                            <div>`winner_respond` returns the winner stake immediately on acceptance.</div>
+                            <div>`refund_any_stake` is surfaced here as a single “Claim stake” action.</div>
+                        </div>
+                    </Panel>
                 </div>
             </div>
-
-            {/* ── My Bids ──────────────────────────────────────── */}
-            <div className="glass p-5 rounded-2xl border border-white/10">
-                <h2 className="text-xl font-semibold mb-3">My Bids</h2>
-
-                {bids.length === 0 ? (
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-gray-300">
-                        No bids yet.
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {bids.map((bid) => (
-                            <div key={bid.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                                <div className="space-y-1 mb-3 text-sm">
-                                    <div className="flex items-center gap-1 text-gray-400">
-                                        <span>Bid ID:</span><CopyButton text={bid.id} />
-                                    </div>
-                                    <div className="flex items-center gap-1 text-gray-400">
-                                        <span>RFQ:</span><CopyButton text={bid.rfqId} />
-                                    </div>
-                                    <p className="text-gray-200">Stake: {microToAleo(bid.stake)}</p>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-gray-400">RFQ Status:</span>
-                                        <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                                            bid.rfqStatus === 'CLOSED'
-                                                ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                                                : bid.rfqStatus === 'WINNER_SELECTED'
-                                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                                                  : 'border-white/15 bg-white/5 text-gray-300'
-                                        }`}>
-                                            {bid.rfqStatus || 'UNKNOWN'}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-gray-400">Bid Status:</span>
-                                        <span className={bid.isRevealed ? 'text-green-400' : 'text-gray-300'}>
-                                            {bid.isRevealed ? 'Revealed' : 'Committed'}
-                                        </span>
-                                    </div>
-                                    {bid.revealedAmount && (
-                                        <p className="text-primary-300 font-medium">
-                                            Amount: {microToAleo(bid.revealedAmount)}
-                                        </p>
-                                    )}
-                                </div>
-
-                                {/* Reveal countdown */}
-                                {bid.revealDeadline && bid.rfqStatus === 'CLOSED' && !bid.isRevealed && (
-                                    <div className="mb-3">
-                                        <DeadlineCountdown
-                                            deadlineBlock={bid.revealDeadline}
-                                            label="Reveal closes in"
-                                            passedLabel="Reveal deadline passed"
-                                        />
-                                    </div>
-                                )}
-
-                                {/* Winner notice */}
-                                {bid.isWinner && bid.rfqStatus === 'WINNER_SELECTED' && (
-                                    <div className="mb-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-200">
-                                        {bid.winnerAccepted
-                                            ? 'You accepted this award. The buyer can now fund escrow.'
-                                            : acceptTxKeys[bid.id]
-                                              ? 'Acceptance submitted — waiting for on-chain confirmation.'
-                                              : 'You were selected as the winner! Accept the award to allow the buyer to fund escrow.'}
-                                    </div>
-                                )}
-
-                                {/* Reveal button */}
-                                {!bid.isRevealed &&
-                                    (bid.rfqStatus === 'CLOSED' ? (
-                                        <button
-                                            className="w-full px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-sm"
-                                            onClick={() => router.push(`/vendor/reveal/${bid.id}`)}
-                                        >
-                                            Reveal Bid
-                                        </button>
-                                    ) : (
-                                        <p className="text-xs text-amber-300">
-                                            Reveal locked until buyer closes bidding.
-                                        </p>
-                                    ))}
-
-                                {/* Accept Award button */}
-                                {bid.isWinner &&
-                                bid.rfqStatus === 'WINNER_SELECTED' &&
-                                !bid.winnerAccepted &&
-                                !acceptTxKeys[bid.id] ? (
-                                    <button
-                                        className="w-full px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-sm mt-2"
-                                        disabled={acceptingBidId === bid.id}
-                                        onClick={() => setConfirmAcceptBid(bid)}
-                                    >
-                                        {acceptingBidId === bid.id ? 'Submitting...' : 'Accept Award'}
-                                    </button>
-                                ) : null}
-
-                                {acceptTxKeys[bid.id] ? (
-                                    <div className="mt-4">
-                                        <TxStatusView idempotencyKey={acceptTxKeys[bid.id]} compact={true} />
-                                    </div>
-                                ) : null}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* Accept Award confirmation dialog */}
-            <ConfirmDialog
-                open={confirmAcceptBid !== null}
-                title="Accept Award?"
-                description="By accepting, you commit to fulfilling this contract. The buyer will then be able to fund the escrow."
-                details={confirmAcceptBid ? [
-                    { label: 'Bid ID', value: confirmAcceptBid.id },
-                    { label: 'RFQ ID', value: confirmAcceptBid.rfqId },
-                    { label: 'Your Bid Amount', value: confirmAcceptBid.revealedAmount ? microToAleo(confirmAcceptBid.revealedAmount) : 'N/A' },
-                ] : []}
-                confirmLabel="Accept Award"
-                variant="primary"
-                loading={acceptingBidId !== null}
-                onConfirm={() => confirmAcceptBid && handleAcceptAward(confirmAcceptBid)}
-                onCancel={() => setConfirmAcceptBid(null)}
-            />
-        </div>
+        </PageShell>
     );
 }

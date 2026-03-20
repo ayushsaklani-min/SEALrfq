@@ -24,11 +24,6 @@ export type BidCommittedEvent = {
     stake: bigint;
 };
 
-export type BiddingClosedEvent = {
-    rfq_id: string;
-    buyer: string;
-};
-
 export type BidRevealedEvent = {
     rfq_id: string;
     bid_id: string;
@@ -66,7 +61,6 @@ export type PaymentReleasedEvent = {
 export type ContractEvent =
     | RFQCreatedEvent
     | BidCommittedEvent
-    | BiddingClosedEvent
     | BidRevealedEvent
     | WinnerSelectedEvent
     | StakeSlashedEvent

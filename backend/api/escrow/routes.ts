@@ -1,142 +1,43 @@
+import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { TxStatus } from '../../db/enums';
-import { requireRole } from '../../auth/middleware';
-import { TransactionTracker } from '../../tx/tracker';
-import { getCurrentBlockHeight } from '../../aleo/executor';
-import { estimateFee } from '../../aleo/fees';
-import { materializeEscrowFromConfirmedFunding } from '../../lib/escrowState';
 import { z } from 'zod';
-import crypto from 'crypto';
+import { requireRole } from '../../auth/middleware';
+import { estimateFee } from '../../aleo/fees';
+import { getCurrentBlockHeight } from '../../aleo/executor';
+import { TransactionTracker } from '../../tx/tracker';
 import type { AleoTransaction } from '../../lib/types';
+import {
+    ACTION_TAG,
+    deriveReceiptHash,
+    PROGRAM_IDS,
+    RFQ_STATUS,
+    TIMING,
+    TOKEN_TYPE,
+    canonicalActionKey,
+    getPlatformConfig,
+    getRfqChainState,
+    getWinningAmountFromChain,
+    tokenSymbol,
+} from '../../lib/sealProtocol';
 
 const prisma = new PrismaClient();
 const tracker = new TransactionTracker(prisma);
-const DEFAULT_PROGRAM_ID = process.env.ALEO_PROGRAM_ID || 'sealrfq_v5.aleo';
 const DEFAULT_NETWORK = process.env.ALEO_NETWORK || 'testnet';
-const IS_POC_PROGRAM = DEFAULT_PROGRAM_ID === 'sealrfq_poc.aleo';
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
-function serializeEscrow(escrow: any) {
-    return {
-        ...escrow,
-        totalAmount: escrow.totalAmount?.toString(),
-        releasedAmount: escrow.releasedAmount?.toString(),
-    };
-}
+const ReleasePartialSchema = z.object({
+    amount: z.string().regex(/^\d+$/).transform((value) => BigInt(value)),
+    txHash: z.string().optional(),
+});
 
-function serializePayment(payment: any) {
-    return {
-        ...payment,
-        amount: payment.amount?.toString(),
-    };
-}
-
-async function getConfirmedPaymentsForRFQ(rfqId: string) {
-    const payments = await prisma.payment.findMany({
-        where: { rfqId },
-        orderBy: { releasedAt: 'desc' },
-    });
-
-    const idempotencyKeys = payments
-        .map((payment) =>
-            payment.releasedTxId.startsWith('pending_')
-                ? payment.releasedTxId.substring('pending_'.length)
-                : null
-        )
-        .filter((k): k is string => Boolean(k));
-
-    const txRows =
-        idempotencyKeys.length > 0
-            ? await prisma.transaction.findMany({
-                  where: { idempotencyKey: { in: idempotencyKeys } },
-                  select: { idempotencyKey: true, status: true },
-              })
-            : [];
-    const txStatusByKey = new Map(txRows.map((t) => [t.idempotencyKey, t.status]));
-
-    const confirmedPayments = payments.filter((payment) => {
-        if (!payment.releasedTxId.startsWith('pending_')) return true;
-        const key = payment.releasedTxId.substring('pending_'.length);
-        return txStatusByKey.get(key) === TxStatus.CONFIRMED;
-    });
-
-    const confirmedReleasedAmount = confirmedPayments.reduce(
-        (acc, payment) => acc + payment.amount,
-        BigInt(0)
-    );
-
-    return { confirmedPayments, confirmedReleasedAmount };
-}
-
-async function synchronizeEscrowSettlementState(rfqId: string): Promise<void> {
-    const [rfq, escrow] = await Promise.all([
-        prisma.rFQ.findUnique({
-            where: { id: rfqId },
-            select: { id: true, status: true },
-        }),
-        prisma.escrow.findUnique({
-            where: { rfqId },
-            select: { rfqId: true, releasedAmount: true, isFinal: true, totalAmount: true },
-        }),
-    ]);
-
-    if (!rfq || !escrow) {
-        return;
-    }
-
-    const { confirmedPayments, confirmedReleasedAmount } = await getConfirmedPaymentsForRFQ(rfqId);
-    const hasConfirmedFinalPayment = confirmedPayments.some((payment) => payment.isFinal);
-    const nextRfqStatus = hasConfirmedFinalPayment ? 'COMPLETED' : 'ESCROW_FUNDED';
-    const escrowNeedsUpdate =
-        escrow.releasedAmount !== confirmedReleasedAmount || escrow.isFinal !== hasConfirmedFinalPayment;
-    const rfqNeedsUpdate = rfq.status !== nextRfqStatus;
-
-    if (!escrowNeedsUpdate && !rfqNeedsUpdate) {
-        return;
-    }
-
-    await prisma.$transaction([
-        ...(escrowNeedsUpdate
-            ? [
-                  prisma.escrow.update({
-                      where: { rfqId },
-                      data: {
-                          releasedAmount: confirmedReleasedAmount,
-                          isFinal: hasConfirmedFinalPayment,
-                      },
-                  }),
-              ]
-            : []),
-        ...(rfqNeedsUpdate
-            ? [
-                  prisma.rFQ.update({
-                      where: { id: rfqId },
-                      data: { status: nextRfqStatus, updatedAt: new Date() },
-                  }),
-              ]
-            : []),
-    ]);
-}
-
-async function nextPaymentNonce(walletAddress: string, rfqId: string): Promise<number> {
-    const confirmed = await prisma.transaction.count({
-        where: {
-            transition: { in: ['release_partial_payment', 'release_final_payment'] },
-            status: 'CONFIRMED',
-            canonicalTxKey: { startsWith: `release_payment:${walletAddress}:${rfqId}:` },
-        },
-    });
-    return confirmed + 1;
-}
-
-async function prepareTrackedTransition(
-    tx: AleoTransaction,
-    idempotencyKey: string,
-    canonicalKey: string,
-): Promise<void> {
-    await tracker.prepare(tx, canonicalKey, idempotencyKey);
-}
+const InvoiceSchema = z.object({
+    paymentRecord: z.string().min(1),
+    receiptNonce: z.string().regex(/^\d+field$/),
+    proofA: z.string().optional(),
+    proofB: z.string().optional(),
+    txHash: z.string().optional(),
+});
 
 function buildWalletTxRequest(tx: AleoTransaction) {
     return {
@@ -148,491 +49,472 @@ function buildWalletTxRequest(tx: AleoTransaction) {
     };
 }
 
-export async function handleGetEscrow(
-    request: NextRequest,
-    rfqId: string,
-): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
-    if (authResult instanceof NextResponse) {
-        return authResult;
-    }
-
-    try {
-        let escrow = await prisma.escrow.findUnique({ where: { rfqId } });
-        if (!escrow) {
-            escrow = await materializeEscrowFromConfirmedFunding(prisma, rfqId);
-        }
-        if (escrow) {
-            await synchronizeEscrowSettlementState(rfqId);
-            escrow = await prisma.escrow.findUnique({ where: { rfqId } });
-        }
-        if (!escrow) {
-            return NextResponse.json(
-                { status: 'error', error: { code: 'NOT_FOUND', message: 'Escrow not found' } },
-                { status: 404 },
-            );
-        }
-
-        const { confirmedPayments, confirmedReleasedAmount } = await getConfirmedPaymentsForRFQ(rfqId);
-
-        const latestBlockIndexed = await getLatestIndexedBlock();
-        const pendingTx = await prisma.transaction.count({
-            where: {
-                canonicalTxKey: { contains: rfqId },
-                status: { in: [TxStatus.PREPARED, TxStatus.SUBMITTED] },
-            },
-        });
-
-        const remainingAmount = escrow.totalAmount - confirmedReleasedAmount;
-        const isReconciled = pendingTx === 0 && Math.abs(latestBlockIndexed - escrow.fundedBlock) < 5;
-
-        // Build milestone list from confirmed payments.
-        // Partial payments = PARTIAL milestone, final payment = FINAL milestone.
-        const milestones = confirmedPayments.map((payment, index) => {
-            const pctOfTotal =
-                escrow.totalAmount > 0n
-                    ? Number((payment.amount * 100n) / escrow.totalAmount)
-                    : 0;
-            return {
-                index: index + 1,
-                type: payment.isFinal ? 'FINAL' : 'PARTIAL',
-                amount: payment.amount.toString(),
-                percentageOfTotal: pctOfTotal,
-                recipient: payment.recipient,
-                releasedBlock: payment.releasedBlock,
-                releasedAt: payment.releasedAt,
-                txId: payment.releasedTxId,
-                status: payment.releasedTxId.startsWith('pending_') ? 'PENDING' : 'CONFIRMED',
-            };
-        });
-
-        return NextResponse.json({
-            status: 'success',
-            data: {
-                ...serializeEscrow(escrow),
-                releasedAmount: confirmedReleasedAmount.toString(),
-                remainingAmount: remainingAmount.toString(),
-                payments: confirmedPayments.map(serializePayment),
-                isReconciled,
-                pendingTx,
-                milestones,
-                nextMilestone: milestones.length === 0
-                    ? { type: 'PARTIAL', suggestedPercentage: 40, description: '1st milestone — partial delivery (40%)' }
-                    : !escrow.isFinal
-                    ? { type: 'FINAL', suggestedPercentage: 100 - milestones.reduce((a, m) => a + m.percentageOfTotal, 0), description: 'Final milestone — project completion' }
-                    : null,
-            },
-        });
-    } catch (error: any) {
-        return NextResponse.json(
-            { status: 'error', error: { code: 'INTERNAL_ERROR', message: error.message } },
-            { status: 500 },
-        );
-    }
+async function prepareTrackedTransition(tx: AleoTransaction, idempotencyKey: string, canonicalKey: string) {
+    await tracker.prepare(tx, canonicalKey, idempotencyKey);
 }
 
-const ReleasePaymentSchema = z.object({
-    amount: z
-        .string()
-        .transform((s) => BigInt(s))
-        .refine((amount) => amount > 0n, { message: 'Amount must be greater than zero' }),
-    milestoneId: z.string().optional(),
-    txHash: z.string().optional(),
-});
+async function nextActionNonce(walletAddress: string, rfqId: string, actionTag: number) {
+    const confirmed = await prisma.transaction.count({
+        where: {
+            status: 'CONFIRMED',
+            canonicalTxKey: { startsWith: `nonce:${actionTag}:${walletAddress}:${rfqId}` },
+        },
+    });
+    return confirmed + 1;
+}
 
-export async function handleReleasePayment(
-    request: NextRequest,
-    rfqId: string,
-): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'NEW_USER']);
-    if (authResult instanceof NextResponse) {
-        return authResult;
+function serializePayment(payment: any) {
+    return {
+        ...payment,
+        amount: payment.amount?.toString(),
+    };
+}
+
+function partialTransition(tokenType: number) {
+    if (tokenType === TOKEN_TYPE.USDCX) return { fn: 'release_partial_usdcx', actionTag: ACTION_TAG.PARTIAL_USDCX };
+    if (tokenType === TOKEN_TYPE.USAD) return { fn: 'release_partial_usad', actionTag: ACTION_TAG.PARTIAL_USAD };
+    return { fn: 'release_partial_payment', actionTag: ACTION_TAG.PAYMENT_CREDITS };
+}
+
+function finalTransition(tokenType: number) {
+    if (tokenType === TOKEN_TYPE.USDCX) return { fn: 'release_final_usdcx', actionTag: ACTION_TAG.FINAL_USDCX };
+    if (tokenType === TOKEN_TYPE.USAD) return { fn: 'release_final_usad', actionTag: ACTION_TAG.FINAL_USAD };
+    return { fn: 'release_final_payment', actionTag: ACTION_TAG.PAYMENT_CREDITS };
+}
+
+function invoiceTransition(tokenType: number) {
+    if (tokenType === TOKEN_TYPE.USDCX) return { fn: 'pay_invoice_usdcx', actionTag: ACTION_TAG.INVOICE_USDCX };
+    if (tokenType === TOKEN_TYPE.USAD) return { fn: 'pay_invoice_usad', actionTag: ACTION_TAG.INVOICE_USAD };
+    return { fn: 'pay_invoice', actionTag: ACTION_TAG.INVOICE_CREDITS };
+}
+
+function winnerClaimTransition(tokenType: number) {
+    if (tokenType === TOKEN_TYPE.USDCX) return 'winner_claim_usdcx';
+    if (tokenType === TOKEN_TYPE.USAD) return 'winner_claim_usad';
+    return 'winner_claim_escrow';
+}
+
+function creatorReclaimTransition(tokenType: number) {
+    if (tokenType === TOKEN_TYPE.USDCX) return 'creator_reclaim_escrow_usdcx';
+    if (tokenType === TOKEN_TYPE.USAD) return 'creator_reclaim_escrow_usad';
+    return 'creator_reclaim_escrow';
+}
+
+async function loadEscrowState(rfqId: string) {
+    const [rfq, escrow, chain, platform, payments, currentBlock] = await Promise.all([
+        prisma.rFQ.findUnique({ where: { id: rfqId } }),
+        prisma.escrow.findUnique({ where: { rfqId } }),
+        getRfqChainState(rfqId),
+        getPlatformConfig(),
+        prisma.payment.findMany({ where: { rfqId }, orderBy: { releasedAt: 'asc' } }),
+        getCurrentBlockHeight(),
+    ]);
+
+    const releasedAmount = payments.reduce((total, payment) => total + payment.amount, BigInt(0));
+    const winningAmount = await getWinningAmountFromChain(rfqId);
+
+    return {
+        rfq,
+        escrow,
+        chain,
+        platform,
+        payments,
+        releasedAmount,
+        winningAmount: winningAmount ? BigInt(winningAmount) : escrow?.totalAmount ?? BigInt(0),
+        currentBlock,
+    };
+}
+
+function feeBpsForToken(tokenType: number, platformFeeBps: number) {
+    return tokenType === TOKEN_TYPE.USAD ? 0 : platformFeeBps;
+}
+
+export async function handleGetEscrow(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    const state = await loadEscrowState(rfqId);
+    if (!state.rfq || !state.escrow) {
+        return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Escrow not found' } }, { status: 404 });
     }
 
+    const remainingAmount = state.escrow.totalAmount - state.releasedAmount;
+    const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
+    const timeoutBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_TIMEOUT_BLOCKS;
+
+    return NextResponse.json({
+        status: 'success',
+        data: {
+            id: state.escrow.id,
+            rfqId,
+            status: state.chain.status,
+            tokenType: state.chain.escrowToken,
+            tokenSymbol: tokenSymbol(state.chain.escrowToken),
+            pricingMode: state.chain.pricingMode,
+            totalAmount: state.escrow.totalAmount.toString(),
+            releasedAmount: state.releasedAmount.toString(),
+            remainingAmount: remainingAmount.toString(),
+            milestoneCount: state.payments.length,
+            payments: state.payments.map(serializePayment),
+            lifecycleBlock: state.chain.lifecycleBlock,
+            currentBlock: state.currentBlock,
+            recoveryBlock,
+            timeoutBlock,
+            winner: state.chain.winner,
+            creator: state.chain.creator ?? state.rfq.buyer,
+            paid: state.chain.paid,
+            feeBps: feeBpsForToken(state.chain.escrowToken, state.platform.feeBps),
+            settlementPathLocked:
+                state.chain.paid ? 'PRIVATE_PAYMENT' : state.releasedAmount > 0n ? 'PARTIAL_RELEASES' : null,
+            canRecoverBond: state.chain.paid && remainingAmount > 0n,
+            canWinnerClaim:
+                state.chain.status === RFQ_STATUS.ESCROW_FUNDED &&
+                !state.chain.paid &&
+                state.currentBlock > recoveryBlock,
+            canCreatorReclaim:
+                state.chain.status === RFQ_STATUS.ESCROW_FUNDED &&
+                !state.chain.paid &&
+                state.currentBlock > recoveryBlock,
+            winningAmount: state.winningAmount.toString(),
+        },
+    });
+}
+
+export async function handleReleasePartialPayment(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
     try {
-        const body = await request.json();
-        const data = ReleasePaymentSchema.parse(body);
-        let rfq = await prisma.rFQ.findUnique({ where: { id: rfqId } });
-
-        if (!rfq) {
-            return NextResponse.json(
-                { status: 'error', error: { code: 'NOT_FOUND', message: 'RFQ not found' } },
-                { status: 404 },
-            );
+        const data = ReleasePartialSchema.parse(await request.json());
+        const state = await loadEscrowState(rfqId);
+        if (!state.rfq || !state.escrow || state.rfq.buyer !== auth.walletAddress) {
+            return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can release escrow.' } }, { status: 403 });
         }
 
-        if (rfq.buyer !== authResult.walletAddress) {
-            return NextResponse.json(
-                { status: 'error', error: { code: 'FORBIDDEN', message: 'Not the RFQ buyer' } },
-                { status: 403 },
-            );
+        const remaining = state.escrow.totalAmount - state.releasedAmount;
+        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Partial releases are only available before invoice payment.' } }, { status: 400 });
+        }
+        if (data.amount <= 0n || data.amount > remaining) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: `Amount must be between 1 and ${remaining}.` } }, { status: 400 });
         }
 
-        let escrow = await prisma.escrow.findUnique({ where: { rfqId } });
-        if (!escrow) {
-            escrow = await materializeEscrowFromConfirmedFunding(prisma, rfqId);
-        }
-        if (escrow) {
-            await synchronizeEscrowSettlementState(rfqId);
-            [rfq, escrow] = await Promise.all([
-                prisma.rFQ.findUnique({ where: { id: rfqId } }),
-                prisma.escrow.findUnique({ where: { rfqId } }),
-            ]);
-        }
-        if (!escrow) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: { code: 'INVALID_STATE', message: 'Escrow not yet funded' },
-                },
-                { status: 400 },
-            );
-        }
-        if (rfq.status !== 'ESCROW_FUNDED') {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'INVALID_STATE',
-                        message: `Cannot release payment: RFQ is in ${rfq.status} state (expected ESCROW_FUNDED)`,
-                    },
-                },
-                { status: 400 },
-            );
-        }
-        if (IS_POC_PROGRAM) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'UNSUPPORTED_PROGRAM',
-                        message: 'Contract-based payout release requires a SealRFQ v2+ program, not sealrfq_poc.aleo',
-                    },
-                },
-                { status: 400 },
-            );
+        const scaled = data.amount * 100n;
+        if (scaled % remaining !== 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Partial releases must resolve to an exact integer percentage of the remaining escrow.' } }, { status: 400 });
         }
 
-        const winnerBid = await prisma.bid.findFirst({
-            where: { rfqId, isWinner: true },
-            select: { vendor: true },
-        });
-        if (!winnerBid) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: { code: 'INVALID_STATE', message: 'No winner selected for this RFQ' },
-                },
-                { status: 400 },
-            );
+        const percentage = Number(scaled / remaining);
+        if (percentage <= 0 || percentage > 100) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Partial release percentage must be between 1 and 100.' } }, { status: 400 });
         }
 
-        const { confirmedReleasedAmount } = await getConfirmedPaymentsForRFQ(rfqId);
-        const remainingAmount = escrow.totalAmount - confirmedReleasedAmount;
-        if (remainingAmount <= 0n) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'INVALID_STATE',
-                        message: 'Escrow has already been fully released',
-                    },
-                },
-                { status: 400 },
-            );
-        }
-        if (data.amount > remainingAmount) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'INSUFFICIENT_FUNDS',
-                        message: `Cannot release ${data.amount.toString()}: only ${remainingAmount.toString()} remaining`,
-                    },
-                },
-                { status: 400 },
-            );
-        }
+        const feeBps = feeBpsForToken(state.chain.escrowToken, state.platform.feeBps);
+        const newTotalReleased = state.releasedAmount + data.amount;
+        const transition = partialTransition(state.chain.escrowToken);
 
-        const inFlight = await prisma.transaction.findFirst({
-            where: {
-                canonicalTxKey: { startsWith: `release_payment:${authResult.walletAddress}:${rfqId}:` },
-                status: { in: [TxStatus.PREPARED, TxStatus.SUBMITTED] },
-            },
-        });
-        if (inFlight) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: { code: 'PAYMENT_IN_PROGRESS', message: 'Another payment release is in progress' },
-                },
-                { status: 409 },
-            );
-        }
-        if (data.milestoneId) {
-            const milestoneCanonicalKey = `release_payment:${authResult.walletAddress}:${rfqId}:milestone_${data.milestoneId}`;
-            const existingAttempt = await prisma.transaction.findFirst({
-                where: {
-                    canonicalTxKey: milestoneCanonicalKey,
-                    status: { in: [TxStatus.PREPARED, TxStatus.SUBMITTED, TxStatus.CONFIRMED] },
-                },
-            });
-            if (existingAttempt) {
-                return NextResponse.json(
-                    {
-                        status: 'error',
-                        error: { code: 'DUPLICATE_PAYMENT', message: 'Milestone already released or in progress' },
-                    },
-                    { status: 400 },
-                );
-            }
-        }
-
-        const currentBlock = DEMO_MODE ? Math.floor(Date.now() / 1000) : await getCurrentBlockHeight();
-        const isFinal = data.amount === remainingAmount;
-        const userNonce = await nextPaymentNonce(authResult.walletAddress, rfqId);
-        const canonicalScope = data.milestoneId
-            ? `milestone_${data.milestoneId}`
-            : `nonce_${userNonce}`;
-        const canonicalKey = `release_payment:${authResult.walletAddress}:${rfqId}:${canonicalScope}`;
-
-        let tx: AleoTransaction;
-        if (isFinal) {
-            tx = {
-                program: DEFAULT_PROGRAM_ID,
-                function: 'release_final_payment',
+        if (!data.txHash) {
+            const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
+            const idempotencyKey = `release_partial_${rfqId}_${crypto.randomUUID()}`;
+            const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, `partial_${newTotalReleased}`);
+            const tx: AleoTransaction = {
+                program: PROGRAM_IDS.rfq,
+                function: transition.fn,
                 inputs: [
                     rfqId,
-                    winnerBid.vendor,
-                    `${remainingAmount}u64`,
-                    `${userNonce}u64`,
-                ],
-                fee: estimateFee('release_final_payment'),
-            };
-        } else {
-            const scaledPercentage = data.amount * 100n;
-            const newTotalReleased = confirmedReleasedAmount + data.amount;
-            if (scaledPercentage % remainingAmount !== 0n) {
-                return NextResponse.json(
-                    {
-                        status: 'error',
-                        error: {
-                            code: 'INVALID_AMOUNT',
-                            message: `Partial release amount must equal an exact integer percentage of the remaining escrow (${remainingAmount.toString()})`,
-                        },
-                    },
-                    { status: 400 },
-                );
-            }
-
-            const percentage = scaledPercentage / remainingAmount;
-            if (percentage <= 0n || percentage > 100n) {
-                return NextResponse.json(
-                    {
-                        status: 'error',
-                        error: {
-                            code: 'INVALID_AMOUNT',
-                            message: 'Partial release percentage must be between 1 and 100',
-                        },
-                    },
-                    { status: 400 },
-                );
-            }
-
-            tx = {
-                program: DEFAULT_PROGRAM_ID,
-                function: 'release_partial_payment',
-                inputs: [
-                    rfqId,
-                    winnerBid.vendor,
+                    state.chain.winner ?? '',
                     `${data.amount}u64`,
-                    `${Number(percentage)}u8`,
+                    `${percentage}u8`,
                     `${newTotalReleased}u64`,
+                    `${feeBps}u64`,
                     `${userNonce}u64`,
                 ],
-                fee: estimateFee('release_partial_payment'),
+                fee: estimateFee(transition.fn),
             };
+
+            await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
+            return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
         }
 
-        if (data.txHash) {
-            // Confirm phase: wallet tx already succeeded, create payment record
-            await prisma.payment.create({
+        await prisma.$transaction([
+            prisma.payment.create({
                 data: {
                     rfqId,
-                    recipient: winnerBid.vendor,
+                    recipient: state.chain.winner ?? '',
                     amount: data.amount,
-                    isFinal,
-                    releasedBlock: currentBlock,
+                    isFinal: false,
+                    releasedBlock: state.currentBlock,
                     releasedTxId: data.txHash,
                     releasedEventIdx: 0,
                 },
-            });
+            }),
+            prisma.escrow.update({
+                where: { rfqId },
+                data: { releasedAmount: newTotalReleased },
+            }),
+        ]);
 
-            return NextResponse.json({
-                status: 'success',
-                data: { txHash: data.txHash },
-            });
+        return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
+    } catch (error: any) {
+        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+    }
+}
+
+export async function handleRecoverEscrowBond(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    const body = await request.json().catch(() => ({}));
+    const txHash = typeof body?.txHash === 'string' ? body.txHash : undefined;
+    const state = await loadEscrowState(rfqId);
+    if (!state.rfq || !state.escrow || state.rfq.buyer !== auth.walletAddress) {
+        return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can recover the escrow bond.' } }, { status: 403 });
+    }
+
+    const remaining = state.escrow.totalAmount - state.releasedAmount;
+    if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || !state.chain.paid || remaining <= 0n) {
+        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Escrow bond recovery is only available after invoice payment.' } }, { status: 400 });
+    }
+
+    const feeBps = feeBpsForToken(state.chain.escrowToken, state.platform.feeBps);
+    const transition = finalTransition(state.chain.escrowToken);
+
+    if (!txHash) {
+        const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
+        const idempotencyKey = `recover_bond_${rfqId}_${crypto.randomUUID()}`;
+        const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, 'recover_bond');
+        const tx: AleoTransaction = {
+            program: PROGRAM_IDS.rfq,
+            function: transition.fn,
+            inputs: [rfqId, state.chain.winner ?? '', `${remaining}u64`, `${feeBps}u64`, `${userNonce}u64`],
+            fee: estimateFee(transition.fn),
+        };
+
+        await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
+        return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+    }
+
+    await prisma.$transaction([
+        prisma.payment.create({
+            data: {
+                rfqId,
+                recipient: state.rfq.buyer,
+                amount: remaining,
+                isFinal: true,
+                releasedBlock: state.currentBlock,
+                releasedTxId: txHash,
+                releasedEventIdx: 0,
+            },
+        }),
+        prisma.escrow.update({
+            where: { rfqId },
+            data: { releasedAmount: state.escrow.totalAmount, isFinal: true },
+        }),
+        prisma.rFQ.update({
+            where: { id: rfqId },
+            data: { status: RFQ_STATUS.COMPLETED },
+        }),
+    ]);
+
+    return NextResponse.json({ status: 'success', data: { txHash } });
+}
+
+export async function handlePayInvoice(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    try {
+        const data = InvoiceSchema.parse(await request.json());
+        const state = await loadEscrowState(rfqId);
+        if (!state.rfq || !state.escrow || state.rfq.buyer !== auth.walletAddress) {
+            return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can pay the invoice.' } }, { status: 403 });
+        }
+        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.releasedAmount > 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Invoice payment is only available before any public release.' } }, { status: 400 });
         }
 
-        // Prepare phase: validate, construct tx, track — but do NOT create payment
-        const paymentId = `payment_${Date.now()}_${crypto.randomUUID().substring(0, 8)}`;
-        const idempotencyKey = `release_payment_${paymentId}`;
-        await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
+        const amount = state.winningAmount;
+        const transition = invoiceTransition(state.chain.escrowToken);
+        const txHash = data.txHash;
 
+        if (!txHash) {
+            const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
+            const idempotencyKey = `pay_invoice_${rfqId}_${crypto.randomUUID()}`;
+            const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, 'invoice');
+            const proofInput =
+                state.chain.escrowToken === TOKEN_TYPE.CREDITS
+                    ? []
+                    : [`[${data.proofA ?? 'proof_a'}, ${data.proofB ?? 'proof_b'}]`];
+            const tx: AleoTransaction = {
+                program: PROGRAM_IDS.rfq,
+                function: transition.fn,
+                inputs: [
+                    rfqId,
+                    state.chain.winner ?? '',
+                    `${amount}u64`,
+                    `${userNonce}u64`,
+                    data.receiptNonce,
+                    data.paymentRecord,
+                    ...proofInput,
+                ],
+                fee: estimateFee(transition.fn),
+            };
+
+            await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
+            return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+        }
+
+        const receiptHash = await deriveReceiptHash(
+            rfqId,
+            auth.walletAddress,
+            state.chain.winner ?? '',
+            amount,
+            data.receiptNonce,
+        );
         return NextResponse.json({
             status: 'success',
             data: {
-                payment_id: paymentId,
-                tx: {
-                    idempotencyKey,
-                    canonicalTxKey: canonicalKey,
-                    request: buildWalletTxRequest(tx),
-                },
+                txHash,
+                receiptHash,
+                paymentCommitment: null,
             },
         });
     } catch (error: any) {
-        return NextResponse.json(
-            { status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } },
-            { status: 400 },
-        );
+        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
     }
 }
 
-const AuditQuerySchema = z.object({
-    rfqId: z.string().optional(),
-    eventType: z.string().optional(),
-    limit: z.coerce.number().min(1).max(500).default(100),
-});
+export async function handleWinnerClaimEscrow(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['VENDOR', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
 
-export async function handleGetAuditTrail(request: NextRequest): Promise<NextResponse> {
-    const authResult = await requireRole(request, ['BUYER', 'AUDITOR']);
-    if (authResult instanceof NextResponse) {
-        return authResult;
+    const body = await request.json().catch(() => ({}));
+    const txHash = typeof body?.txHash === 'string' ? body.txHash : undefined;
+    const state = await loadEscrowState(rfqId);
+
+    if (!state.rfq || !state.escrow || state.chain.winner !== auth.walletAddress) {
+        return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the winner can claim escrow.' } }, { status: 403 });
     }
 
-    try {
-        const url = new URL(request.url);
-        const params = {
-            rfqId: url.searchParams.get('rfqId') || undefined,
-            eventType: url.searchParams.get('eventType') || undefined,
-            limit: url.searchParams.get('limit') || '100',
+    const remaining = state.escrow.totalAmount - state.releasedAmount;
+    const mode = state.releasedAmount > 0n ? 1 : 0;
+    const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
+    if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.currentBlock <= recoveryBlock || remaining <= 0n) {
+        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Winner claim is not available yet.' } }, { status: 400 });
+    }
+
+    const transition = winnerClaimTransition(state.chain.escrowToken);
+    if (!txHash) {
+        const idempotencyKey = `winner_claim_${rfqId}_${crypto.randomUUID()}`;
+        const canonicalKey = `winner_claim:${rfqId}:${mode}`;
+        const tx: AleoTransaction = {
+            program: PROGRAM_IDS.rfq,
+            function: transition,
+            inputs: [rfqId, `${remaining}u64`, `${mode}u8`],
+            fee: estimateFee(transition),
         };
-        const query = AuditQuerySchema.parse(params);
-        const where: any = {};
-        if (query.rfqId) where.rfqId = query.rfqId;
-        if (query.eventType) where.eventType = query.eventType;
 
-        // Non-auditors can only query their own RFQs.
-        if (authResult.role !== 'AUDITOR') {
-            const buyerRfqIds = await prisma.rFQ
-                .findMany({ where: { buyer: authResult.walletAddress }, select: { id: true } })
-                .then((rows) => rows.map((r) => r.id));
-            if (query.rfqId && !buyerRfqIds.includes(query.rfqId)) {
-                return NextResponse.json(
-                    { status: 'error', error: { code: 'FORBIDDEN', message: 'Access denied to this RFQ audit trail' } },
-                    { status: 403 },
-                );
-            }
-            if (!query.rfqId) {
-                where.rfqId = { in: buyerRfqIds };
-            }
-        }
-
-        const events = await prisma.rFQEvent.findMany({
-            where,
-            orderBy: [{ blockHeight: 'desc' }, { eventIdx: 'desc' }],
-            take: query.limit,
-        });
-
-        if (events.length === 0) {
-            const txRows = await prisma.transaction.findMany({
-                where: {
-                    status: TxStatus.CONFIRMED,
-                    ...(query.rfqId ? { canonicalTxKey: { contains: query.rfqId } } : {}),
-                },
-                orderBy: { confirmedAt: 'desc' },
-                take: query.limit,
-                select: {
-                    id: true,
-                    transition: true,
-                    txHash: true,
-                    idempotencyKey: true,
-                    blockHeight: true,
-                    confirmedAt: true,
-                    submittedAt: true,
-                    preparedAt: true,
-                    canonicalTxKey: true,
-                },
-            });
-
-            const synthesized = txRows
-                .map((tx) => ({
-                    id: `tx_${tx.id}`,
-                    eventType: transitionToEventType(tx.transition),
-                    txId: tx.txHash || tx.idempotencyKey,
-                    blockHeight: tx.blockHeight || 0,
-                    eventVersion: 1,
-                    processedAt: tx.confirmedAt || tx.submittedAt || tx.preparedAt,
-                    rfqId: inferRfqIdFromCanonicalKey(tx.canonicalTxKey),
-                    transition: tx.transition,
-                    eventData: null,
-                }))
-                .filter((event) => (query.eventType ? event.eventType === query.eventType : true));
-
-            return NextResponse.json({
-                status: 'success',
-                data: synthesized,
-            });
-        }
-
-        return NextResponse.json({
-            status: 'success',
-            data: events.map((e) => ({
-                id: e.id,
-                eventType: e.eventType,
-                txId: e.txId,
-                blockHeight: e.blockHeight,
-                eventVersion: e.eventVersion,
-                processedAt: e.processedAt,
-                rfqId: e.rfqId,
-                transition: e.transition,
-                eventData: e.eventData,
-            })),
-        });
-    } catch (error: any) {
-        return NextResponse.json(
-            { status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } },
-            { status: 400 },
-        );
+        await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
+        return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
     }
+
+    await prisma.$transaction([
+        prisma.payment.create({
+            data: {
+                rfqId,
+                recipient: auth.walletAddress,
+                amount: remaining,
+                isFinal: true,
+                releasedBlock: state.currentBlock,
+                releasedTxId: txHash,
+                releasedEventIdx: 0,
+            },
+        }),
+        prisma.escrow.update({
+            where: { rfqId },
+            data: { releasedAmount: state.escrow.totalAmount, isFinal: true },
+        }),
+        prisma.rFQ.update({
+            where: { id: rfqId },
+            data: { status: RFQ_STATUS.COMPLETED },
+        }),
+    ]);
+
+    return NextResponse.json({ status: 'success', data: { txHash, mode } });
 }
 
-async function getLatestIndexedBlock(): Promise<number> {
-    const latest = await prisma.rFQEvent.findFirst({
-        orderBy: { blockHeight: 'desc' },
-        select: { blockHeight: true },
+export async function handleCreatorReclaimEscrow(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    const body = await request.json().catch(() => ({}));
+    const txHash = typeof body?.txHash === 'string' ? body.txHash : undefined;
+    const state = await loadEscrowState(rfqId);
+
+    if (!state.rfq || !state.escrow || state.rfq.buyer !== auth.walletAddress) {
+        return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can reclaim escrow.' } }, { status: 403 });
+    }
+
+    const remaining = state.escrow.totalAmount - state.releasedAmount;
+    const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
+    if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.currentBlock <= recoveryBlock || remaining <= 0n) {
+        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Creator reclaim is not available yet.' } }, { status: 400 });
+    }
+
+    const transition = creatorReclaimTransition(state.chain.escrowToken);
+    if (!txHash) {
+        const idempotencyKey = `creator_reclaim_${rfqId}_${crypto.randomUUID()}`;
+        const canonicalKey = `creator_reclaim:${rfqId}`;
+        const tx: AleoTransaction = {
+            program: PROGRAM_IDS.rfq,
+            function: transition,
+            inputs: [rfqId, `${remaining}u64`],
+            fee: estimateFee(transition),
+        };
+
+        await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
+        return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+    }
+
+    await prisma.$transaction([
+        prisma.escrow.update({
+            where: { rfqId },
+            data: { releasedAmount: state.escrow.totalAmount, isFinal: true },
+        }),
+        prisma.rFQ.update({
+            where: { id: rfqId },
+            data: { status: RFQ_STATUS.CANCELLED },
+        }),
+    ]);
+
+    return NextResponse.json({ status: 'success', data: { txHash } });
+}
+
+export async function handleGetAuditTrail(request: NextRequest) {
+    const auth = await requireRole(request, ['BUYER', 'AUDITOR', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    const url = new URL(request.url);
+    const rfqId = url.searchParams.get('rfqId') || undefined;
+    const txs = await prisma.transaction.findMany({
+        where: rfqId ? { canonicalTxKey: { contains: rfqId } } : undefined,
+        orderBy: { preparedAt: 'desc' },
+        take: 100,
     });
 
-    return latest?.blockHeight || 0;
+    return NextResponse.json({
+        status: 'success',
+        data: txs.map((tx) => ({
+            id: tx.id,
+            transition: tx.transition,
+            txHash: tx.txHash,
+            status: tx.status,
+            preparedAt: tx.preparedAt,
+            submittedAt: tx.submittedAt,
+            confirmedAt: tx.confirmedAt,
+            canonicalTxKey: tx.canonicalTxKey,
+        })),
+    });
 }
 
-function transitionToEventType(transition: string): string {
-    const map: Record<string, string> = {
-        create_rfq: 'RFQ_CREATED',
-        submit_bid_commit: 'BID_COMMITTED',
-        close_bidding: 'BIDDING_CLOSED',
-        reveal_bid: 'BID_REVEALED',
-        select_winner: 'WINNER_SELECTED',
-        slash_non_revealer: 'STAKE_SLASHED',
-        fund_escrow: 'ESCROW_FUNDED',
-        release_partial_payment: 'PAYMENT_RELEASED',
-        release_final_payment: 'PAYMENT_RELEASED',
-    };
-    return map[transition] || 'UNKNOWN';
-}
-
-function inferRfqIdFromCanonicalKey(canonicalTxKey: string): string | null {
-    const fieldMatch = canonicalTxKey.match(/\d+field/);
-    return fieldMatch ? fieldMatch[0] : null;
-}
-
+export const handleReleasePayment = handleReleasePartialPayment;

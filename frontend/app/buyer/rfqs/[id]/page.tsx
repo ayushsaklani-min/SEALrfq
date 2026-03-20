@@ -1,28 +1,59 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { authenticatedFetch } from '@/lib/authFetch';
-import { walletFirstTx } from '@/lib/walletTx';
-import { TxStatusView } from '@/components/TxStatus';
+import { useEffect, useState } from 'react';
 import DeadlineCountdown from '@/components/DeadlineCountdown';
-import ConfirmDialog from '@/components/ConfirmDialog';
-import CopyButton from '@/components/CopyButton';
+import { TxStatusView } from '@/components/TxStatus';
+import { Button } from '@/components/ui/Button';
+import {
+    ActionBar,
+    DataGrid,
+    DataPoint,
+    Field,
+    InfoList,
+    InfoRow,
+    Notice,
+    PageHeader,
+    PageShell,
+    Panel,
+    PricingChip,
+    StatusChip,
+    TextInput,
+    TokenChip,
+} from '@/components/protocol/ProtocolPrimitives';
+import { authenticatedFetch } from '@/lib/authFetch';
+import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import { formatAmount, PRICING_MODE, pricingLabel, TIMING } from '@/lib/sealProtocol';
+import { walletFirstTx } from '@/lib/walletTx';
+import { useProtocolStore } from '@/stores/protocolStore';
 
-type RFQ = {
+type RFQDetail = {
     id: string;
     buyer: string;
-    status: 'OPEN' | 'CLOSED' | 'WINNER_SELECTED' | 'ESCROW_FUNDED' | 'COMPLETED' | string;
+    creator?: string;
+    itemName?: string | null;
+    description?: string | null;
+    quantity?: string | null;
+    unit?: string | null;
+    status: string;
+    tokenType: number;
+    pricingMode: number;
+    minBid: string;
     biddingDeadline: number;
     revealDeadline: number;
-    minBid: string;
-    createdAt?: string;
-    // Product details (stored by backend alongside metadataHash)
-    itemName?: string;
-    description?: string;
-    quantity?: string;
-    unit?: string;
-    metadataHash?: string;
+    minBidCount?: string | null;
+    bidCount?: string | null;
+    flatStake?: string | null;
+    lifecycleBlock?: number | null;
+    paid?: boolean;
+    feeBps?: number;
+    auctionSource?: string | null;
+    winningBidId?: string | null;
+    winningVendor?: string | null;
+    winningBidAmount?: string | null;
+    winningStake?: string | null;
+    winnerAccepted?: boolean;
+    platformPaused?: boolean;
 };
 
 type Bid = {
@@ -30,290 +61,423 @@ type Bid = {
     vendor: string;
     isRevealed: boolean;
     isWinner?: boolean;
-    revealedAmount: string | null;
+    revealedAmount?: string | null;
     stake: string;
+    isRefunded?: boolean;
+    isSlashed?: boolean;
 };
 
-function formatDeadline(value: number): string {
-    if (!Number.isFinite(value) || value <= 0) return '-';
-    if (value >= 1_000_000_000) {
-        return `${new Date(value * 1000).toLocaleString()} (${value})`;
-    }
-    return `Block ${value}`;
+type ImportForm = {
+    auctionId: string;
+    winnerAddress: string;
+    price: string;
+};
+
+function parseCount(value?: string | null) {
+    return Number(value || '0');
 }
 
-/** Convert microcredits string/bigint to a display string in ALEO. */
-function microToAleo(microcredits: string | bigint): string {
-    try {
-        const n = typeof microcredits === 'bigint' ? microcredits : BigInt(microcredits);
-        const whole = n / 1_000_000n;
-        const frac = n % 1_000_000n;
-        if (frac === 0n) return `${whole} ALEO`;
-        const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '');
-        return `${whole}.${fracStr} ALEO`;
-    } catch {
-        return microcredits.toString();
+function resolveCancelMode(rfq: RFQDetail, currentBlock: number | null) {
+    if (currentBlock === null) return null;
+    if (rfq.status === 'OPEN' && currentBlock < rfq.biddingDeadline) {
+        return { label: 'Cancel before bidding closes', mode: 3 };
     }
+    if (rfq.status === 'OPEN' && currentBlock >= rfq.biddingDeadline && parseCount(rfq.bidCount) < parseCount(rfq.minBidCount)) {
+        return { label: 'Cancel for too few bids', mode: 0 };
+    }
+    if (rfq.status === 'REVEAL' && currentBlock > rfq.revealDeadline + TIMING.SLASH_WINDOW) {
+        return { label: 'Cancel for stuck reveal', mode: 1 };
+    }
+    if (rfq.status === 'WINNER_SELECTED' && rfq.lifecycleBlock && currentBlock > rfq.lifecycleBlock + TIMING.ESCROW_TIMEOUT_BLOCKS) {
+        return { label: 'Cancel for missing escrow', mode: 2 };
+    }
+    return null;
 }
 
-export default function BuyerRFQDetailPage({ params }: { params: { id: string } }) {
-    const rfqId = params.id;
-    const [rfq, setRfq] = useState<RFQ | null>(null);
+export default function BuyerRfqDetailPage({ params }: { params: { id: string } }) {
+    const addRecord = useProtocolStore((state) => state.addRecord);
+    const setWorkflow = useProtocolStore((state) => state.setWorkflow);
+    const [rfq, setRfq] = useState<RFQDetail | null>(null);
     const [bids, setBids] = useState<Bid[]>([]);
+    const [currentBlock, setCurrentBlock] = useState<number | null>(null);
+    const [importForm, setImportForm] = useState<ImportForm>({ auctionId: '', winnerAddress: '', price: '' });
+    const [fundAmount, setFundAmount] = useState('');
+    const [txKey, setTxKey] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [closing, setClosing] = useState(false);
-    const [closeTxKey, setCloseTxKey] = useState<string | null>(null);
-    const [biddingDeadlineReached, setBiddingDeadlineReached] = useState(false);
-    const [revealDeadlineReached, setRevealDeadlineReached] = useState(false);
-    const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-
-    const onBiddingDeadline = useCallback(() => setBiddingDeadlineReached(true), []);
-    const onRevealDeadline = useCallback(() => setRevealDeadlineReached(true), []);
+    const [actionBusy, setActionBusy] = useState(false);
 
     useEffect(() => {
+        let cancelled = false;
         const load = async () => {
             try {
-                const [rfqRes, bidsRes] = await Promise.all([
-                    authenticatedFetch(`/api/rfq/${rfqId}`),
-                    authenticatedFetch(`/api/rfq/${rfqId}/bids`),
+                const [rfqResponse, bidsResponse, blockHeight] = await Promise.all([
+                    authenticatedFetch(`/api/rfq/${params.id}`),
+                    authenticatedFetch(`/api/rfq/${params.id}/bids`),
+                    fetchCurrentBlockHeight(),
                 ]);
-                const [rfqJson, bidsJson] = await Promise.all([rfqRes.json(), bidsRes.json()]);
+                const rfqPayload = await rfqResponse.json();
+                const bidsPayload = await bidsResponse.json().catch(() => ({ data: [] }));
 
-                if (!rfqRes.ok) {
-                    throw new Error(rfqJson?.error?.message || 'Failed to load RFQ');
+                if (!rfqResponse.ok) {
+                    throw new Error(rfqPayload?.error?.message || 'Failed to load RFQ.');
                 }
 
-                setRfq(rfqJson.data);
-                setBids(bidsRes.ok ? bidsJson.data || [] : []);
-            } catch (e: any) {
-                setError(e?.message || 'Failed to load RFQ');
+                if (!cancelled) {
+                    setRfq(rfqPayload.data);
+                    setBids(bidsPayload.data || []);
+                    setCurrentBlock(blockHeight);
+                    setFundAmount(rfqPayload.data.winningBidAmount || '');
+                }
+            } catch (caught: any) {
+                if (!cancelled) setError(caught?.message || 'Failed to load RFQ.');
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
 
         load();
-    }, [rfqId]);
+        const intervalId = window.setInterval(load, 15000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(intervalId);
+        };
+    }, [params.id]);
 
-    const revealedCount = useMemo(() => bids.filter((b) => b.isRevealed).length, [bids]);
-
-    const handleCloseBidding = async () => {
-        if (!rfq || rfq.status !== 'OPEN' || closing) return;
-        setShowCloseConfirm(false);
-        setClosing(true);
+    const selectWinner = async (winningBidId: string) => {
+        if (!rfq || actionBusy) return;
+        setActionBusy(true);
         setError(null);
         try {
             const result = await walletFirstTx(
-                `/api/rfq/${rfqId}/close`,
-                {},
-                (_prepareData, txHash) => ({ txHash }),
+                `/api/rfq/${encodeURIComponent(rfq.id)}/select-winner`,
+                { winningBidId },
+                (_prepareData, txHash) => ({ winningBidId, txHash }),
             );
-            setCloseTxKey(result.idempotencyKey);
-            setRfq((prev) => (prev ? { ...prev, status: 'CLOSED' } : prev));
-        } catch (e: any) {
-            setError(e?.message || 'Failed to close bidding');
-            setClosing(false);
+
+            if (result.data.winner_certificate) {
+                setWorkflow({ winnerCertificate: result.data.winner_certificate });
+                addRecord({
+                    id: result.data.winner_certificate.certificateId,
+                    type: 'WinnerCertificate',
+                    rfqId: rfq.id,
+                    owner: result.data.winner_certificate.winnerAddress,
+                    payload: result.data.winner_certificate,
+                    createdAt: new Date().toISOString(),
+                });
+            }
+
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to select winner.');
+        } finally {
+            setActionBusy(false);
         }
     };
 
-    if (loading) return <div className="max-w-5xl mx-auto p-8 text-gray-400">Loading RFQ...</div>;
-    if (error) return <div className="max-w-5xl mx-auto p-8 text-red-400">{error}</div>;
-    if (!rfq) return <div className="max-w-5xl mx-auto p-8 text-red-400">RFQ not found</div>;
+    const fundEscrow = async () => {
+        if (!rfq || actionBusy) return;
+        setActionBusy(true);
+        setError(null);
+        try {
+            const result = await walletFirstTx(
+                `/api/rfq/${encodeURIComponent(rfq.id)}/fund-escrow`,
+                { amount: fundAmount },
+                (_prepareData, txHash) => ({ amount: fundAmount, txHash }),
+            );
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to fund escrow.');
+        } finally {
+            setActionBusy(false);
+        }
+    };
 
-    const hasProductDetails = rfq.itemName || rfq.quantity;
+    const importAuctionResult = async () => {
+        if (!rfq || actionBusy) return;
+        setActionBusy(true);
+        setError(null);
+        try {
+            const result = await walletFirstTx(
+                `/api/rfq/${encodeURIComponent(rfq.id)}/import-auction`,
+                {
+                    auctionId: importForm.auctionId,
+                    winnerAddress: importForm.winnerAddress,
+                    price: importForm.price,
+                    auctionType: rfq.pricingMode,
+                },
+                (_prepareData, txHash) => ({
+                    auctionId: importForm.auctionId,
+                    winnerAddress: importForm.winnerAddress,
+                    price: importForm.price,
+                    auctionType: rfq.pricingMode,
+                    txHash,
+                }),
+            );
+            addRecord({
+                id: `${rfq.id}:${importForm.auctionId}`,
+                type: 'AuctionImported',
+                rfqId: rfq.id,
+                owner: rfq.buyer,
+                payload: importForm,
+                createdAt: new Date().toISOString(),
+            });
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to import auction result.');
+        } finally {
+            setActionBusy(false);
+        }
+    };
+
+    const cancelRfq = async () => {
+        if (!rfq || actionBusy) return;
+        setActionBusy(true);
+        setError(null);
+        try {
+            const result = await walletFirstTx(
+                `/api/rfq/${encodeURIComponent(rfq.id)}/cancel`,
+                {},
+                (_prepareData, txHash) => ({ txHash }),
+            );
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to cancel RFQ.');
+        } finally {
+            setActionBusy(false);
+        }
+    };
+
+    const slashBid = async (bid: Bid) => {
+        if (!rfq || actionBusy) return;
+        setActionBusy(true);
+        setError(null);
+        try {
+            const result = await walletFirstTx(
+                `/api/rfq/${encodeURIComponent(rfq.id)}/slash`,
+                { bidId: bid.id, stake: bid.stake },
+                (_prepareData, txHash) => ({ bidId: bid.id, stake: bid.stake, txHash }),
+            );
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to slash non-revealer.');
+        } finally {
+            setActionBusy(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <PageShell>
+                <Panel title="Loading RFQ">
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Fetching RFQ details and bids.</div>
+                </Panel>
+            </PageShell>
+        );
+    }
+
+    if (!rfq) {
+        return (
+            <PageShell>
+                <Notice tone="danger">{error || 'RFQ not found.'}</Notice>
+            </PageShell>
+        );
+    }
+
+    const cancelMode = resolveCancelMode(rfq, currentBlock);
+    const slashWindowOpen =
+        currentBlock !== null &&
+        currentBlock > rfq.revealDeadline &&
+        currentBlock <= rfq.revealDeadline + TIMING.SLASH_WINDOW &&
+        (rfq.status === 'REVEAL' || rfq.status === 'WINNER_SELECTED');
+    const canSelectWinner =
+        rfq.pricingMode === PRICING_MODE.RFQ &&
+        rfq.status === 'REVEAL' &&
+        currentBlock !== null &&
+        currentBlock >= rfq.revealDeadline;
+    const canImportAuction =
+        rfq.pricingMode !== PRICING_MODE.RFQ &&
+        rfq.status === 'OPEN' &&
+        !rfq.auctionSource &&
+        parseCount(rfq.bidCount) === 0 &&
+        currentBlock !== null &&
+        currentBlock <= rfq.revealDeadline;
+    const canFundEscrow = rfq.status === 'WINNER_SELECTED' && rfq.winnerAccepted && Boolean(rfq.winningBidAmount);
+    const revealedCount = bids.filter((bid) => bid.isRevealed).length;
 
     return (
-        <div className="max-w-5xl mx-auto py-10 px-4">
-            <div className="flex items-center justify-between gap-4 mb-6">
-                <div>
-                    <h1 className="text-3xl font-bold">RFQ Details</h1>
-                    <div className="flex items-center gap-1 mt-1">
-                        <p className="text-gray-400 text-sm">ID:</p>
-                        <CopyButton text={rfq.id} />
-                    </div>
-                </div>
-                <span className="px-3 py-1 rounded-full text-sm border border-white/15 bg-white/5">
-                    {rfq.status}
-                </span>
-            </div>
-
-            {/* ── Product Details ─────────────────────────────────── */}
-            {hasProductDetails && (
-                <div className="glass p-6 rounded-2xl border border-white/10 mb-6">
-                    <h2 className="text-lg font-semibold mb-4 text-white">Product</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                        {rfq.itemName && (
-                            <div className="md:col-span-2">
-                                <div className="text-gray-400 mb-1">Item Name</div>
-                                <div className="text-white text-base font-medium">{rfq.itemName}</div>
-                            </div>
-                        )}
-                        {rfq.quantity && (
-                            <div>
-                                <div className="text-gray-400 mb-1">Quantity</div>
-                                <div>{rfq.quantity}{rfq.unit ? ` ${rfq.unit}` : ''}</div>
-                            </div>
-                        )}
-                        {rfq.description && (
-                            <div className={rfq.quantity ? '' : 'md:col-span-2'}>
-                                <div className="text-gray-400 mb-1">Description</div>
-                                <div className="text-gray-200 leading-relaxed">{rfq.description}</div>
-                            </div>
-                        )}
-                        {rfq.metadataHash && (
-                            <div className="md:col-span-2">
-                                <div className="text-gray-400 mb-1">Metadata Hash <span className="text-xs">(SHA-256, on-chain)</span></div>
-                                <div className="font-mono text-xs text-gray-500 break-all">{rfq.metadataHash}</div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* ── RFQ Info ────────────────────────────────────────── */}
-            <div className="glass p-6 rounded-2xl border border-white/10 mb-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <div>
-                        <div className="text-gray-400">Buyer</div>
-                        <div className="break-all">{rfq.buyer}</div>
-                    </div>
-                    <div>
-                        <div className="text-gray-400">Minimum Bid</div>
-                        <div className="font-semibold">{microToAleo(rfq.minBid)}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{Number(rfq.minBid).toLocaleString()} microcredits</div>
-                    </div>
-                    <div>
-                        <div className="text-gray-400">Bidding Deadline</div>
-                        <div>{formatDeadline(rfq.biddingDeadline)}</div>
-                    </div>
-                    <div>
-                        <div className="text-gray-400">Reveal Deadline</div>
-                        <div>{formatDeadline(rfq.revealDeadline)}</div>
-                    </div>
-                </div>
-            </div>
-
-            {/* ── Deadline Timers ────────────────────────────────── */}
-            <div className="space-y-3 mb-6">
-                {rfq.status === 'OPEN' && (
-                    <DeadlineCountdown
-                        deadlineBlock={rfq.biddingDeadline}
-                        label="Bidding closes in"
-                        passedLabel="Bidding deadline reached — you can now close bidding"
-                        onDeadlineReached={onBiddingDeadline}
-                    />
-                )}
-                {(rfq.status === 'CLOSED' || rfq.status === 'OPEN') && (
-                    <DeadlineCountdown
-                        deadlineBlock={rfq.revealDeadline}
-                        label="Reveal window closes in"
-                        passedLabel="Reveal deadline passed"
-                        onDeadlineReached={onRevealDeadline}
-                    />
-                )}
-            </div>
-
-            {/* ── Bidding Control ─────────────────────────────────── */}
-            <div className="glass p-6 rounded-2xl border border-white/10 mb-6">
-                <h2 className="text-xl font-semibold mb-3">Bidding Control</h2>
-                <p className="text-sm text-gray-400 mb-4">
-                    {rfq.status === 'OPEN' && !biddingDeadlineReached
-                        ? 'Waiting for bidding deadline to pass before you can close bidding.'
-                        : 'Close bidding to open the vendor reveal window.'}
-                </p>
-                <button
-                    onClick={() => setShowCloseConfirm(true)}
-                    disabled={rfq.status !== 'OPEN' || closing || !biddingDeadlineReached}
-                    className="px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {closing
-                        ? 'Submitting...'
-                        : rfq.status !== 'OPEN'
-                          ? 'Bidding Closed'
-                          : !biddingDeadlineReached
-                            ? 'Waiting for deadline...'
-                            : 'Close Bidding'}
-                </button>
-                {closeTxKey && (
-                    <div className="mt-4">
-                        <TxStatusView idempotencyKey={closeTxKey} showHistory={true} compact={true} />
-                    </div>
-                )}
-            </div>
-
-            {/* ── Bids ────────────────────────────────────────────── */}
-            <div className="glass p-6 rounded-2xl border border-white/10 mb-6">
-                <h2 className="text-xl font-semibold mb-4">Bids</h2>
-                <p className="text-sm text-gray-400 mb-3">
-                    Total: {bids.length} | Revealed: {revealedCount}
-                </p>
-
-                {bids.length === 0 ? (
-                    <p className="text-gray-400">No bids yet.</p>
-                ) : (
-                    <div className="space-y-3">
-                        {bids.map((bid) => (
-                            <div key={bid.id} className="bg-white/5 border border-white/10 rounded-xl p-4">
-                                <div className="flex items-center gap-1 text-sm text-gray-300 mb-1">
-                                    <span>Bid ID:</span><CopyButton text={bid.id} />
-                                </div>
-                                <div className="flex items-center gap-1 text-sm text-gray-300 mb-1">
-                                    <span>Vendor:</span><CopyButton text={bid.vendor} />
-                                </div>
-                                <p className="text-sm text-gray-300">
-                                    Status: {bid.isRevealed ? 'Revealed' : 'Committed'}
-                                    {bid.isWinner ? ' ✓ Winner' : ''}
-                                </p>
-                                {bid.revealedAmount && (
-                                    <p className="text-sm text-primary-300">
-                                        Amount: {microToAleo(bid.revealedAmount)}
-                                        <span className="text-gray-500 ml-2">({Number(bid.revealedAmount).toLocaleString()} microcredits)</span>
-                                    </p>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* ── Actions ─────────────────────────────────────────── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Link
-                    href={`/buyer/rfqs/${rfq.id}/select-winner`}
-                    className="text-center p-3 rounded-xl bg-primary-600 hover:bg-primary-700"
-                >
-                    Select Winner
-                </Link>
-                <Link
-                    href={`/buyer/rfqs/${rfq.id}/fund-escrow`}
-                    className="text-center p-3 rounded-xl bg-primary-600 hover:bg-primary-700"
-                >
-                    Fund Escrow
-                </Link>
-                <Link
-                    href={`/escrow/${rfq.id}`}
-                    className="text-center p-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15"
-                >
-                    View Escrow
-                </Link>
-            </div>
-
-            <ConfirmDialog
-                open={showCloseConfirm}
-                title="Close Bidding?"
-                description="This is irreversible. Once bidding is closed, vendors can no longer submit bids and the reveal window opens."
-                details={[
-                    { label: 'RFQ ID', value: rfq.id },
-                    { label: 'Bids received', value: String(bids.length) },
-                    { label: 'Reveal deadline', value: `Block ${rfq.revealDeadline}` },
-                ]}
-                confirmLabel="Close Bidding"
-                variant="warning"
-                loading={closing}
-                onConfirm={handleCloseBidding}
-                onCancel={() => setShowCloseConfirm(false)}
+        <PageShell className="space-y-6">
+            <PageHeader
+                eyebrow="Buyer"
+                title={rfq.itemName || 'RFQ detail'}
+                description={rfq.description || 'Manage bids, import auction results, and hand off into settlement.'}
+                actions={
+                    <ActionBar>
+                        <StatusChip status={rfq.status} />
+                        <TokenChip tokenType={rfq.tokenType} />
+                        <PricingChip pricingMode={rfq.pricingMode} />
+                    </ActionBar>
+                }
             />
-        </div>
+
+            {rfq.platformPaused ? (
+                <Notice tone="warning" title="Platform paused">
+                    Existing RFQs still work, but no new RFQs can be created.
+                </Notice>
+            ) : null}
+
+            {error ? <Notice tone="danger">{error}</Notice> : null}
+
+            <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <div className="space-y-6">
+                    <Panel title="Summary">
+                        <DataGrid columns={3}>
+                            <DataPoint label="Minimum bid" value={formatAmount(rfq.minBid, rfq.tokenType)} />
+                            <DataPoint label="Flat stake" value={rfq.flatStake ? formatAmount(rfq.flatStake, 0) : '--'} />
+                            <DataPoint label="Bid count" value={`${rfq.bidCount ?? '0'} / ${rfq.minBidCount ?? '1'}`} />
+                            <DataPoint label="Revealed bids" value={revealedCount} />
+                            <DataPoint label="Winner" value={rfq.winningVendor || '--'} />
+                            <DataPoint label="Winning amount" value={rfq.winningBidAmount ? formatAmount(rfq.winningBidAmount, rfq.tokenType) : '--'} />
+                            <DataPoint label="Winner accepted" value={rfq.winnerAccepted ? 'Yes' : 'No'} />
+                        </DataGrid>
+                        <div className="mt-4 grid gap-3">
+                            <DeadlineCountdown deadlineBlock={rfq.biddingDeadline} label="Bidding deadline" passedLabel="Bidding closed" />
+                            <DeadlineCountdown deadlineBlock={rfq.revealDeadline} label="Reveal deadline" passedLabel="Reveal closed" />
+                        </div>
+                    </Panel>
+
+                    <Panel
+                        title="Next action"
+                        subtitle={
+                            canImportAuction
+                                ? `This RFQ uses ${pricingLabel(rfq.pricingMode)} pricing, so the next step is to import the finalized auction result.`
+                                : canFundEscrow
+                                  ? 'The winner accepted. Fund the winning amount to start settlement.'
+                                  : canSelectWinner
+                                    ? 'Reveal has ended. Pick the winning revealed bid below.'
+                                    : 'The next available action depends on the current contract state.'
+                        }
+                    >
+                        {canImportAuction ? (
+                            <div className="space-y-4">
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <Field label="Auction id">
+                                        <TextInput value={importForm.auctionId} onChange={(event) => setImportForm((current) => ({ ...current, auctionId: event.target.value }))} placeholder="123field" />
+                                    </Field>
+                                    <Field label="Winner address">
+                                        <TextInput value={importForm.winnerAddress} onChange={(event) => setImportForm((current) => ({ ...current, winnerAddress: event.target.value }))} placeholder="aleo1..." />
+                                    </Field>
+                                </div>
+                                <Field label="Final price" hint="Use the finalized auction price in micro-units.">
+                                    <TextInput value={importForm.price} onChange={(event) => setImportForm((current) => ({ ...current, price: event.target.value }))} placeholder="125000000" />
+                                </Field>
+                                <Button onClick={importAuctionResult} isLoading={actionBusy}>
+                                    Import auction result
+                                </Button>
+                            </div>
+                        ) : canFundEscrow ? (
+                            <div className="space-y-4">
+                                <Field label="Escrow amount" hint="This should match the winning amount.">
+                                    <TextInput value={fundAmount} onChange={(event) => setFundAmount(event.target.value)} placeholder="Winning amount in micro-units" />
+                                </Field>
+                                <Button onClick={fundEscrow} isLoading={actionBusy}>
+                                    Fund escrow
+                                </Button>
+                            </div>
+                        ) : canSelectWinner ? (
+                            <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                                Choose the winner from the revealed bids list below.
+                            </div>
+                        ) : (
+                            <InfoList>
+                                <InfoRow label="Current status" value={rfq.status} />
+                                <InfoRow label="Price source" value={pricingLabel(rfq.pricingMode)} />
+                                <InfoRow label="Settlement" value={rfq.paid ? 'Private payment recorded' : 'No private payment yet'} />
+                            </InfoList>
+                        )}
+                    </Panel>
+
+                    <Panel title="Bids">
+                        {bids.length === 0 ? (
+                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No bids yet.</div>
+                        ) : (
+                            <div className="space-y-3">
+                                {bids.map((bid) => (
+                                    <div key={bid.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
+                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                            <div className="min-w-0">
+                                                <div className="text-sm font-medium text-white">{bid.vendor}</div>
+                                                <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{bid.id}</div>
+                                            </div>
+                                            <div className="text-sm text-[hsl(var(--muted-foreground))] lg:text-right">
+                                                <div>{bid.isWinner ? 'Winner' : bid.isRevealed ? 'Revealed' : 'Committed only'}</div>
+                                                <div>Stake: {formatAmount(bid.stake, 0)}</div>
+                                                <div>Bid: {bid.revealedAmount ? formatAmount(bid.revealedAmount, rfq.tokenType) : '--'}</div>
+                                            </div>
+                                        </div>
+                                        <ActionBar className="mt-3">
+                                            {canSelectWinner && bid.isRevealed ? (
+                                                <Button size="sm" onClick={() => selectWinner(bid.id)} isLoading={actionBusy}>
+                                                    Select winner
+                                                </Button>
+                                            ) : null}
+                                            {slashWindowOpen && !bid.isRevealed ? (
+                                                <Button size="sm" variant="danger" onClick={() => slashBid(bid)} isLoading={actionBusy}>
+                                                    Slash non-revealer
+                                                </Button>
+                                            ) : null}
+                                        </ActionBar>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </Panel>
+                </div>
+
+                <div className="space-y-6">
+                    <Panel title="Winning bid">
+                        <InfoList>
+                            <InfoRow label="Winning bid id" value={rfq.winningBidId || '--'} />
+                            <InfoRow label="Vendor" value={rfq.winningVendor || '--'} />
+                            <InfoRow label="Amount" value={rfq.winningBidAmount ? formatAmount(rfq.winningBidAmount, rfq.tokenType) : '--'} />
+                            <InfoRow label="Accepted" value={rfq.winnerAccepted ? 'Yes' : 'No'} />
+                            <InfoRow label="Private payment" value={rfq.paid ? 'Yes' : 'No'} />
+                        </InfoList>
+                        <ActionBar className="mt-4">
+                            <Link href={`/escrow/${encodeURIComponent(rfq.id)}`}>
+                                <Button variant="secondary">Open escrow</Button>
+                            </Link>
+                        </ActionBar>
+                    </Panel>
+
+                    <Panel title="Lifecycle controls">
+                        {canSelectWinner ? (
+                            <Notice title="Winner selection is open">Reveal is complete. The lowest valid revealed bid can now be selected.</Notice>
+                        ) : null}
+                        {slashWindowOpen ? (
+                            <Notice tone="warning" title="Slash window open">
+                                Slash unrevealed bids before block {rfq.revealDeadline + TIMING.SLASH_WINDOW}.
+                            </Notice>
+                        ) : null}
+                        {cancelMode ? (
+                            <div className="space-y-3">
+                                <div className="text-sm text-[hsl(var(--muted-foreground))]">Available cancel path: <span className="font-medium text-white">{cancelMode.label}</span></div>
+                                <Button variant="danger" onClick={cancelRfq} isLoading={actionBusy}>
+                                    Cancel RFQ
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No cancel path is available right now.</div>
+                        )}
+                    </Panel>
+
+                    {txKey ? (
+                        <Panel title="Latest transaction">
+                            <TxStatusView idempotencyKey={txKey} compact={true} />
+                        </Panel>
+                    ) : null}
+                </div>
+            </div>
+        </PageShell>
     );
 }

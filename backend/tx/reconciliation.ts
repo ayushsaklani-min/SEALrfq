@@ -227,17 +227,39 @@ export class ReconciliationJob {
         // business tables (RFQ, Bid, Escrow) whose on-chain counterparts can
         // be inferred from the stored IDs.
         const rfqs = await this.prisma.rFQ.findMany({ select: { id: true } });
-        const bids = await this.prisma.bid.findMany({ select: { id: true, rfqId: true } });
+        const bids = await this.prisma.bid.findMany({
+            select: { id: true, rfqId: true, vendor: true, isWinner: true },
+        });
 
-        const candidateKeys: string[] = [
-            ...rfqs.map((r) => `create_rfq:${r.id}`),
-            ...rfqs.map((r) => `close_bidding:${r.id}`),
-            ...rfqs.map((r) => `select_winner:${r.id}`),
-            ...rfqs.map((r) => `fund_escrow:${r.id}`),
-            ...rfqs.map((r) => `cancel_rfq:${r.id}`),
-            ...bids.map((b) => `submit_bid_commit:${b.rfqId}:${b.id}`),
-            ...bids.map((b) => `reveal_bid:${b.rfqId}:${b.id}`),
-        ];
+        const candidateKeys = Array.from(
+            new Set([
+                ...rfqs.map((r) => `create_rfq:${r.id}`),
+                ...rfqs.flatMap((r) => [
+                    `select_winner:${r.id}`,
+                    `fund_escrow:${r.id}:fund_escrow`,
+                    `fund_escrow:${r.id}:fund_escrow_usdcx`,
+                    `fund_escrow:${r.id}:fund_escrow_usad`,
+                    `import_auction_result:${r.id}`,
+                    `creator_reclaim:${r.id}`,
+                    `winner_claim:${r.id}:0`,
+                    `winner_claim:${r.id}:1`,
+                    `cancel_rfq_post_deadline:${r.id}:0`,
+                    `cancel_rfq_post_deadline:${r.id}:1`,
+                    `cancel_rfq_post_deadline:${r.id}:2`,
+                    `cancel_rfq_post_deadline:${r.id}:3`,
+                ]),
+                ...bids.map((b) => `submit_bid_commit:${b.rfqId}:${b.id}`),
+                ...bids.map((b) => `reveal_bid:${b.rfqId}:${b.id}`),
+                ...bids.map((b) => `refund_any_stake:${b.vendor}:${b.rfqId}:${b.id}`),
+                ...bids.map((b) => `slash_non_revealer:${b.vendor}:${b.rfqId}:${b.id}`),
+                ...bids
+                    .filter((b) => b.isWinner)
+                    .flatMap((b) => [
+                        `winner_respond:${b.vendor}:${b.rfqId}:accept`,
+                        `winner_respond:${b.vendor}:${b.rfqId}:decline`,
+                    ]),
+            ]),
+        );
 
         for (const canonicalKey of candidateKeys) {
             // Skip keys we already track.
@@ -257,7 +279,7 @@ export class ReconciliationJob {
                         idempotencyKey: `phantom_${result.txHash}`,
                         canonicalTxKey: canonicalKey,
                         transition: canonicalKey.split(':')[0],
-                        programId: process.env.ALEO_PROGRAM_ID || 'sealrfq_v9.aleo',
+                        programId: process.env.ALEO_PROGRAM_ID || 'sealrfq_v17.aleo',
                         status: 'CONFIRMED',
                         txHash: result.txHash,
                         blockHeight: result.blockHeight ?? null,

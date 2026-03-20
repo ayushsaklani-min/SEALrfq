@@ -110,8 +110,10 @@ export async function reconstructRFQState(rfqId: string): Promise<any> {
                 state.status = 'OPEN';
                 Object.assign(state, eventData);
                 break;
-            case 'BIDDING_CLOSED':
-                state.status = 'CLOSED';
+            case 'BID_REVEALED':
+                if (!state.status || state.status === 'OPEN') {
+                    state.status = 'REVEAL';
+                }
                 break;
             case 'WINNER_SELECTED':
                 state.status = 'WINNER_SELECTED';

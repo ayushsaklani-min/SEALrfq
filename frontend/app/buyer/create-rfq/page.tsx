@@ -1,357 +1,316 @@
-/**
- * Create RFQ Page
- *
- * Buyer creates a new RFQ with validated inputs.
- * - `minBid` is entered in ALEO and converted to microcredits before submission.
- * - Product details are hashed for on-chain metadata.
- */
-
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { TxStatusView } from '@/components/TxStatus';
-import { walletFirstTx } from '@/lib/walletTx';
+import { Button } from '@/components/ui/Button';
+import {
+    ActionBar,
+    DataGrid,
+    DataPoint,
+    Field,
+    Notice,
+    PageHeader,
+    PageShell,
+    Panel,
+    PricingChip,
+    SelectInput,
+    TextAreaInput,
+    TextInput,
+    TokenChip,
+} from '@/components/protocol/ProtocolPrimitives';
+import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
-import { z } from 'zod';
+import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import {
+    createRfqSchema,
+    formatAmount,
+    formatBlockTime,
+    hashToField,
+    pricingLabel,
+    PRICING_MODE,
+    randomField,
+    TIMING,
+    TOKEN_TYPE,
+} from '@/lib/sealProtocol';
+import { walletFirstTx } from '@/lib/walletTx';
+import { useProtocolStore } from '@/stores/protocolStore';
 
-const CreateRFQSchema = z
-    .object({
-        biddingDeadline: z.number().int().positive(),
-        revealDeadline: z.number().int().positive(),
-        minBid: z.bigint().positive(),
-    })
-    .refine((data) => data.biddingDeadline < data.revealDeadline, {
-        message: 'Bidding deadline must be before reveal deadline',
-    });
+type PlatformPayload = {
+    initialized: boolean;
+    paused: boolean;
+    isAdmin: boolean;
+    feeBps: number;
+};
 
-function toDateTimeLocal(date: Date): string {
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 16);
+function toMicroUnits(value: string): string | null {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    return String(Math.round(numeric * 1_000_000));
 }
 
-function toEpochSeconds(value: string): number {
-    const ts = Date.parse(value);
-    if (Number.isNaN(ts)) throw new Error('Invalid date/time selected');
-    return Math.floor(ts / 1000);
-}
-
-function aleoToMicro(aleo: string): bigint | null {
-    const n = parseFloat(aleo);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return BigInt(Math.round(n * 1_000_000));
-}
-
-async function computeMetadataHash(data: object): Promise<string> {
-    const json = JSON.stringify(data);
-    const bytes = new TextEncoder().encode(json);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
-    const hashBytes = new Uint8Array(hashBuffer).slice(0, 16);
-    let num = BigInt(0);
-    for (const b of hashBytes) {
-        num = (num << 8n) | BigInt(b);
-    }
-    return `${num}field`;
-}
-
-export default function CreateRFQPage() {
+export default function CreateRfqPage() {
+    const { walletAddress } = useWallet();
+    const saveRfqSalt = useProtocolStore((state) => state.saveRfqSalt);
+    const setPlatformConfig = useProtocolStore((state) => state.setPlatformConfig);
+    const [currentBlock, setCurrentBlock] = useState<number | null>(null);
+    const [platform, setPlatform] = useState<PlatformPayload | null>(null);
     const [itemName, setItemName] = useState('');
     const [description, setDescription] = useState('');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState('');
-
     const [biddingDeadline, setBiddingDeadline] = useState('');
     const [revealDeadline, setRevealDeadline] = useState('');
     const [minBid, setMinBid] = useState('');
-
+    const [minBidCount, setMinBidCount] = useState('1');
+    const [tokenType, setTokenType] = useState(String(TOKEN_TYPE.CREDITS));
+    const [pricingMode, setPricingMode] = useState(String(PRICING_MODE.RFQ));
     const [rfqId, setRfqId] = useState<string | null>(null);
     const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
-
+    const [error, setError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
-    const [validationError, setValidationError] = useState<string | null>(null);
 
     useEffect(() => {
-        const now = Date.now();
-        setBiddingDeadline(toDateTimeLocal(new Date(now + 10 * 60 * 1000)));
-        setRevealDeadline(toDateTimeLocal(new Date(now + 30 * 60 * 1000)));
-    }, []);
+        let cancelled = false;
+        const load = async () => {
+            const [blockHeight, configResponse] = await Promise.all([
+                fetchCurrentBlockHeight(),
+                authenticatedFetch('/api/platform/config').catch(() => null),
+            ]);
 
-    const minBidMicro = aleoToMicro(minBid);
+            if (cancelled) return;
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+            if (blockHeight) {
+                setCurrentBlock(blockHeight);
+                setBiddingDeadline(String(blockHeight + 360));
+                setRevealDeadline(String(blockHeight + 360 + TIMING.MIN_REVEAL_WINDOW));
+            }
+
+            if (configResponse) {
+                const payload = await configResponse.json().catch(() => null);
+                if (configResponse.ok && payload?.data) {
+                    setPlatform(payload.data);
+                    setPlatformConfig(payload.data);
+                }
+            }
+        };
+
+        load();
+        return () => {
+            cancelled = true;
+        };
+    }, [setPlatformConfig]);
+
+    const minBidMicro = toMicroUnits(minBid);
+    const revealWindow = biddingDeadline && revealDeadline ? Number(revealDeadline) - Number(biddingDeadline) : 0;
+    const bidWindow = biddingDeadline && currentBlock ? Number(biddingDeadline) - currentBlock : 0;
+
+    const handleSubmit = async (event: React.FormEvent) => {
+        event.preventDefault();
         if (submitting) return;
 
         setSubmitting(true);
-        setValidationError(null);
+        setError(null);
 
         try {
-            if (!itemName.trim()) throw new Error('Item name is required');
-            if (!quantity.trim() || Number.isNaN(Number(quantity)) || Number(quantity) <= 0) {
-                throw new Error('Quantity must be a positive number');
-            }
+            if (!walletAddress) throw new Error('Connect your wallet first.');
+            if (!platform?.initialized) throw new Error('Platform config has not been initialized yet.');
+            if (platform.paused) throw new Error('Platform is paused. New RFQs are blocked.');
+            if (!itemName.trim()) throw new Error('Enter a short title for the RFQ.');
 
-            const biddingDeadlineEpoch = toEpochSeconds(biddingDeadline);
-            const revealDeadlineEpoch = toEpochSeconds(revealDeadline);
+            const minBidValue = toMicroUnits(minBid);
+            if (!minBidValue) throw new Error('Enter a valid minimum bid.');
 
-            if (!minBidMicro) throw new Error('Enter a valid minimum bid in ALEO');
-
-            const data = CreateRFQSchema.parse({
-                biddingDeadline: biddingDeadlineEpoch,
-                revealDeadline: revealDeadlineEpoch,
-                minBid: minBidMicro,
+            const salt = randomField();
+            const metadataHash = await hashToField([
+                'RFQ_METADATA',
+                itemName.trim(),
+                description.trim(),
+                quantity.trim(),
+                unit.trim(),
+            ]);
+            const parsed = createRfqSchema.parse({
+                salt,
+                metadataHash,
+                biddingDeadline: Number(biddingDeadline),
+                revealDeadline: Number(revealDeadline),
+                minBid: minBidValue,
+                minBidCount: Number(minBidCount),
+                tokenType: Number(tokenType),
+                pricingMode: Number(pricingMode),
             });
 
-            const productDetails = {
+            const prepareBody = {
+                ...parsed,
                 itemName: itemName.trim(),
                 description: description.trim(),
                 quantity: quantity.trim(),
                 unit: unit.trim(),
             };
-            const metadataHash = await computeMetadataHash(productDetails);
 
-            const prepareBody = {
-                biddingDeadline: data.biddingDeadline,
-                revealDeadline: data.revealDeadline,
-                minBid: data.minBid.toString(),
-                metadataHash,
-                ...productDetails,
-            };
+            const result = await walletFirstTx('/api/rfq/create', prepareBody, (_prepareData, txHash) => ({
+                ...prepareBody,
+                txHash,
+            }));
 
-            const txResult = await walletFirstTx(
-                '/api/rfq/create',
-                prepareBody,
-                (prepareData, txHash) => ({
-                    ...prepareBody,
-                    txHash,
-                    rfqId: prepareData.rfq_id,
-                }),
-            );
-
-            setRfqId(txResult.data.rfq_id);
-            setIdempotencyKey(txResult.idempotencyKey);
-        } catch (error: any) {
-            setValidationError(error.message);
+            saveRfqSalt(result.data.rfq_id, salt);
+            setRfqId(result.data.rfq_id);
+            setIdempotencyKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to create RFQ.');
             setSubmitting(false);
         }
     };
 
-    if (idempotencyKey) {
+    if (idempotencyKey && rfqId) {
         return (
-            <div className="max-w-3xl mx-auto py-10 px-4">
-                <h1 className="text-3xl font-bold mb-4">Creating RFQ</h1>
-                <div className="glass p-6 rounded-xl border border-white/10">
-                    <p className="text-green-400 mb-3">Wallet transaction submitted and backend tracking started.</p>
-                    {rfqId && <p className="text-sm text-gray-300 mb-4">RFQ ID: {rfqId}</p>}
-                    <TxStatusView idempotencyKey={idempotencyKey} showHistory={true} />
-                    {rfqId && (
-                        <Link
-                            className="inline-block mt-4 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700"
-                            href={`/buyer/rfqs/${encodeURIComponent(rfqId)}`}
-                        >
-                            View RFQ
-                        </Link>
-                    )}
-                </div>
-            </div>
+            <PageShell className="space-y-6">
+                <PageHeader
+                    eyebrow="Buyer"
+                    title="RFQ created"
+                    description="The RFQ id was derived locally and the wallet transaction was submitted against the v15 program."
+                />
+                <Panel title="Submission status">
+                    <div className="space-y-4">
+                        <DataGrid>
+                            <DataPoint label="RFQ id" value={<span className="break-all">{rfqId}</span>} />
+                            <DataPoint label="Settlement token" value={Number(tokenType) === TOKEN_TYPE.USDCX ? 'USDCx' : Number(tokenType) === TOKEN_TYPE.USAD ? 'USAD' : 'ALEO'} />
+                        </DataGrid>
+                        <TxStatusView idempotencyKey={idempotencyKey} showHistory={true} />
+                        <ActionBar>
+                            <Link
+                                href={`/buyer/rfqs/${encodeURIComponent(rfqId)}`}
+                                className="inline-flex rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-medium text-[hsl(var(--primary-foreground))]"
+                            >
+                                Open RFQ
+                            </Link>
+                            <Link
+                                href="/buyer/create-rfq"
+                                className="inline-flex rounded-lg border border-[hsl(var(--border))] px-4 py-2 text-sm font-medium text-white"
+                            >
+                                Create another
+                            </Link>
+                        </ActionBar>
+                    </div>
+                </Panel>
+            </PageShell>
         );
     }
 
     return (
-        <div className="max-w-3xl mx-auto py-12 px-4">
-            <h1 className="text-4xl font-bold font-display mb-8 text-center bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-                Create New RFQ
-            </h1>
+        <PageShell className="space-y-6">
+            <PageHeader
+                eyebrow="Buyer"
+                title="Create RFQ"
+                description="Set the item, deadlines, token, and pricing mode. The RFQ id and salt are generated automatically."
+                actions={
+                    <ActionBar>
+                        <TokenChip tokenType={Number(tokenType)} />
+                        <PricingChip pricingMode={Number(pricingMode)} />
+                    </ActionBar>
+                }
+            />
 
-            <div className="glass p-8 rounded-2xl border border-white/5 shadow-2xl">
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div>
-                        <h2 className="text-lg font-semibold text-white mb-4">Product Details</h2>
+            {!platform?.initialized ? (
+                <Notice tone="warning" title="Platform setup required">
+                    The admin must initialize `platform_config[0u8]` before RFQs can be created.
+                </Notice>
+            ) : null}
+
+            {platform?.paused ? (
+                <Notice tone="warning" title="Platform paused">
+                    RFQ creation is temporarily disabled.
+                </Notice>
+            ) : null}
+
+            {error ? <Notice tone="danger">{error}</Notice> : null}
+
+            <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <Panel title="RFQ form" subtitle="All deadlines are block numbers. Stakes are always held in ALEO credits.">
+                    <form className="space-y-6" onSubmit={handleSubmit}>
                         <div className="space-y-4">
-                            <div className="space-y-2">
-                                <label htmlFor="itemName" className="block text-sm font-medium text-gray-300">
-                                    Item Name <span className="text-red-400">*</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    id="itemName"
-                                    value={itemName}
-                                    onChange={(e) => setItemName(e.target.value)}
-                                    required
-                                    placeholder="e.g., Laptop, Steel Rods, Office Chairs"
-                                    className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 hover:bg-black/60 transition-colors"
-                                />
-                            </div>
-
-                            <div className="space-y-2">
-                                <label htmlFor="description" className="block text-sm font-medium text-gray-300">
-                                    Description <span className="text-gray-500">(optional)</span>
-                                </label>
-                                <textarea
-                                    id="description"
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    rows={3}
-                                    placeholder="Specifications, quality requirements, delivery terms..."
-                                    className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 hover:bg-black/60 transition-colors resize-none"
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                    <label htmlFor="quantity" className="block text-sm font-medium text-gray-300">
-                                        Quantity <span className="text-red-400">*</span>
-                                    </label>
-                                    <input
-                                        type="number"
-                                        id="quantity"
-                                        value={quantity}
-                                        onChange={(e) => setQuantity(e.target.value)}
-                                        required
-                                        min="1"
-                                        placeholder="e.g., 100"
-                                        className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 hover:bg-black/60 transition-colors"
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label htmlFor="unit" className="block text-sm font-medium text-gray-300">
-                                        Unit <span className="text-gray-500">(optional)</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        id="unit"
-                                        value={unit}
-                                        onChange={(e) => setUnit(e.target.value)}
-                                        placeholder="e.g., pcs, kg, boxes"
-                                        className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 hover:bg-black/60 transition-colors"
-                                    />
-                                </div>
+                            <Field label="What are you buying?">
+                                <TextInput value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Industrial pump assembly" />
+                            </Field>
+                            <Field label="Description" hint="Use this for specs, delivery notes, and compliance requirements.">
+                                <TextAreaInput value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Scope, specifications, delivery terms, inspection requirements." />
+                            </Field>
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <Field label="Quantity">
+                                    <TextInput value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="100" />
+                                </Field>
+                                <Field label="Unit">
+                                    <TextInput value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="units, kg, cases" />
+                                </Field>
                             </div>
                         </div>
-                    </div>
 
-                    <div className="border-t border-white/10" />
-
-                    <div>
-                        <h2 className="text-lg font-semibold text-white mb-4">Bidding Schedule</h2>
-                        <div className="space-y-4">
-                            <div className="space-y-2">
-                                <label htmlFor="biddingDeadline" className="block text-sm font-medium text-gray-300">
-                                    Bidding Deadline <span className="text-gray-500">(date & time)</span>
-                                </label>
-                                <input
-                                    type="datetime-local"
-                                    id="biddingDeadline"
-                                    value={biddingDeadline}
-                                    onChange={(e) => setBiddingDeadline(e.target.value)}
-                                    required
-                                    className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 hover:bg-black/60 transition-colors"
-                                />
-                                <p className="text-xs text-gray-500">Converted server-side to an approximate future block height.</p>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label htmlFor="revealDeadline" className="block text-sm font-medium text-gray-300">
-                                    Reveal Deadline <span className="text-gray-500">(date & time)</span>
-                                </label>
-                                <input
-                                    type="datetime-local"
-                                    id="revealDeadline"
-                                    value={revealDeadline}
-                                    onChange={(e) => setRevealDeadline(e.target.value)}
-                                    required
-                                    className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 hover:bg-black/60 transition-colors"
-                                />
-                                <p className="text-xs text-gray-500">Converted server-side to an approximate future block height.</p>
-                            </div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <Field label="Minimum acceptable bid" hint="Displayed in the selected settlement token.">
+                                <TextInput type="number" min="0.000001" step="0.000001" value={minBid} onChange={(event) => setMinBid(event.target.value)} placeholder="125" />
+                            </Field>
+                            <Field label="Minimum vendor count" hint="RFQ can be cancelled after bidding closes if this is not met.">
+                                <TextInput type="number" min="1" value={minBidCount} onChange={(event) => setMinBidCount(event.target.value)} />
+                            </Field>
                         </div>
-                    </div>
 
-                    <div className="border-t border-white/10" />
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <Field label="Bid close block" hint="Must be after the current block and within the max RFQ range.">
+                                <TextInput type="number" value={biddingDeadline} onChange={(event) => setBiddingDeadline(event.target.value)} />
+                            </Field>
+                            <Field label="Reveal close block" hint={`Reveal must stay open for at least ${TIMING.MIN_REVEAL_WINDOW} blocks.`}>
+                                <TextInput type="number" value={revealDeadline} onChange={(event) => setRevealDeadline(event.target.value)} />
+                            </Field>
+                        </div>
 
-                    <div>
-                        <h2 className="text-lg font-semibold text-white mb-4">Pricing</h2>
-                        <div className="space-y-2">
-                            <label htmlFor="minBid" className="block text-sm font-medium text-gray-300">
-                                Minimum Bid <span className="text-gray-500">(ALEO)</span>
-                            </label>
-                            <div className="relative">
-                                <input
-                                    type="number"
-                                    id="minBid"
-                                    value={minBid}
-                                    onChange={(e) => setMinBid(e.target.value)}
-                                    required
-                                    min="0.000001"
-                                    step="any"
-                                    placeholder="e.g., 50"
-                                    className="bg-black/40 border border-white/10 text-white text-sm rounded-xl focus:ring-primary-500 focus:border-primary-500 block w-full p-4 pr-20 hover:bg-black/60 transition-colors"
-                                />
-                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">
-                                    ALEO
-                                </span>
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <Field label="Settlement token" hint="Winner payments settle in this token. Stake remains in ALEO credits.">
+                                <SelectInput value={tokenType} onChange={(event) => setTokenType(event.target.value)}>
+                                    <option value={TOKEN_TYPE.CREDITS}>ALEO credits</option>
+                                    <option value={TOKEN_TYPE.USDCX}>USDCx</option>
+                                    <option value={TOKEN_TYPE.USAD}>USAD</option>
+                                </SelectInput>
+                            </Field>
+                            <Field label="Price source" hint="Choose whether the RFQ runs its own sealed flow or imports an auction result.">
+                                <SelectInput value={pricingMode} onChange={(event) => setPricingMode(event.target.value)}>
+                                    <option value={PRICING_MODE.RFQ}>RFQ sealed bids</option>
+                                    <option value={PRICING_MODE.VICKREY}>Import Vickrey result</option>
+                                    <option value={PRICING_MODE.DUTCH}>Import Dutch result</option>
+                                </SelectInput>
+                            </Field>
+                        </div>
+
+                        <Button type="submit" size="lg" isLoading={submitting} disabled={platform?.paused || !platform?.initialized}>
+                            Create RFQ
+                        </Button>
+                    </form>
+                </Panel>
+
+                <div className="space-y-6">
+                    <Panel title="Review">
+                        <DataGrid columns={2}>
+                            <DataPoint label="Current block" value={currentBlock ?? 'Unavailable'} />
+                            <DataPoint label="Bid window" value={bidWindow > 0 ? `${bidWindow} blocks` : '--'} subtle={bidWindow > 0 ? `~${formatBlockTime(bidWindow)}` : undefined} />
+                            <DataPoint label="Reveal window" value={revealWindow > 0 ? `${revealWindow} blocks` : '--'} subtle={revealWindow > 0 ? `~${formatBlockTime(revealWindow)}` : undefined} />
+                            <DataPoint label="Minimum bid" value={minBidMicro ? formatAmount(minBidMicro, Number(tokenType)) : '--'} />
+                            <DataPoint label="Pricing mode" value={pricingLabel(Number(pricingMode))} />
+                            <DataPoint label="Platform fee" value={Number(tokenType) === TOKEN_TYPE.USAD ? 'No fee on USAD' : `${platform?.feeBps ?? 0} bps`} />
+                        </DataGrid>
+                    </Panel>
+
+                    <Panel title="What happens next">
+                        <div className="space-y-2 text-sm text-[hsl(var(--muted-foreground))]">
+                            <div>The app generates a random field salt and derives the RFQ id in the browser before submission.</div>
+                            <div>
+                                {Number(pricingMode) === PRICING_MODE.RFQ
+                                    ? 'This RFQ will accept sealed bid commits and later move into the reveal and winner-selection flow.'
+                                    : `This RFQ will stay open until you import a finalized ${pricingLabel(Number(pricingMode))} auction result.`}
                             </div>
-                            <p className="text-xs text-gray-500">
-                                {minBidMicro
-                                    ? `= ${minBidMicro.toLocaleString()} microcredits (sent on-chain)`
-                                    : 'Enter amount - vendors must bid at least this much'}
-                            </p>
+                            <div>USAD settlement uses zero fees. ALEO and USDCx use the current platform basis points.</div>
                         </div>
-                    </div>
-
-                    {validationError && (
-                        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm flex items-center">
-                            <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                <path
-                                    fillRule="evenodd"
-                                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                            {validationError}
-                        </div>
-                    )}
-
-                    <button
-                        type="submit"
-                        disabled={submitting}
-                        className={`w-full text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 focus:ring-primary-800 font-medium rounded-xl text-lg px-5 py-4 text-center transition-all shadow-lg shadow-primary-900/20 ${submitting ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02]'}`}
-                    >
-                        {submitting ? (
-                            <span className="flex items-center justify-center">
-                                <svg
-                                    className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                >
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path
-                                        className="opacity-75"
-                                        fill="currentColor"
-                                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                    />
-                                </svg>
-                                Creating...
-                            </span>
-                        ) : (
-                            'Create RFQ'
-                        )}
-                    </button>
-                </form>
+                    </Panel>
+                </div>
             </div>
-
-            <div className="mt-8 p-6 rounded-2xl bg-white/5 border border-white/5">
-                <h3 className="text-lg font-bold mb-4 font-display">Guidelines</h3>
-                <ul className="space-y-2 text-gray-400 text-sm list-disc pl-5">
-                    <li>Item name and quantity are required; description helps vendors understand your needs.</li>
-                    <li>Bidding deadline must be in the future; reveal deadline must follow it.</li>
-                    <li>Minimum bid is in ALEO and is converted to microcredits on-chain.</li>
-                    <li>Product details are hashed and stored on-chain for integrity.</li>
-                    <li>All bids remain sealed until the reveal phase opens.</li>
-                </ul>
-            </div>
-        </div>
+        </PageShell>
     );
 }

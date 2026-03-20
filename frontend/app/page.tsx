@@ -2,126 +2,111 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { gsap } from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { ShieldCheck, Gavel, Lock, ArrowRight } from 'lucide-react';
 import { useWallet } from '@/contexts/WalletContext';
-import useLenis from '@/hooks/useLenis';
-import { siteConfig, valuePropsConfig } from '@/config';
-import Hero from '@/sections/Hero';
-import ValueProp from '@/sections/ValueProp';
-import AlbumCube from '@/sections/AlbumCube';
-import ParallaxGallery from '@/sections/ParallaxGallery';
-import TourSchedule from '@/sections/TourSchedule';
-import Footer from '@/sections/Footer';
+import { Button } from '@/components/ui/Button';
 
-gsap.registerPlugin(ScrollTrigger);
+const features = [
+    {
+        icon: Lock,
+        title: 'Sealed Bids',
+        description: 'Submit encrypted bid commitments. No one sees your price until the reveal phase.',
+    },
+    {
+        icon: Gavel,
+        title: 'Multiple Auction Types',
+        description: 'Classic RFQ, Vickrey (second-price), and Dutch (descending-price) auctions.',
+    },
+    {
+        icon: ShieldCheck,
+        title: 'On-Chain Settlement',
+        description: 'Escrow-backed payments in ALEO, USDCx, or USAD with verifiable fairness.',
+    },
+];
 
-export default function Home() {
+export default function HomePage() {
     const router = useRouter();
     const { ready, walletAddress, role, connectWallet, connecting } = useWallet();
 
-    useLenis(ready && !walletAddress);
-
     useEffect(() => {
-        if (!ready) return;
-        if (walletAddress) {
-            // NEW_USER or no role → role selection; otherwise dashboard
-            if (!role || role === 'NEW_USER') {
-                router.replace('/select-role');
-            } else {
-                router.replace('/dashboard');
-            }
+        if (!ready || !walletAddress) return;
+        if (!role || role === 'NEW_USER') {
+            router.replace('/select-role');
+            return;
         }
-    }, [ready, router, walletAddress, role]);
-
-    useEffect(() => {
-        if (walletAddress) return;
-
-        if (siteConfig.title) {
-            document.title = siteConfig.title;
-        }
-
-        const metaViewport = document.querySelector('meta[name="viewport"]');
-        if (metaViewport) {
-            metaViewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-        }
-
-        const setupGlobalSnap = () => {
-            const pinned = ScrollTrigger.getAll()
-                .filter((st) => st.vars.pin)
-                .sort((a, b) => a.start - b.start);
-
-            const maxScroll = ScrollTrigger.maxScroll(window);
-            if (!maxScroll || pinned.length === 0) return;
-
-            const pinnedRanges = pinned.map((st) => ({
-                start: st.start / maxScroll,
-                end: (st.end ?? st.start) / maxScroll,
-                center: (st.start + ((st.end ?? st.start) - st.start) * 0.5) / maxScroll,
-            }));
-
-            ScrollTrigger.create({
-                snap: {
-                    snapTo: (value: number) => {
-                        const inPinned = pinnedRanges.some((r) => value >= r.start - 0.02 && value <= r.end + 0.02);
-                        if (!inPinned) return value;
-
-                        return pinnedRanges.reduce(
-                            (closest, r) => (Math.abs(r.center - value) < Math.abs(closest - value) ? r.center : closest),
-                            pinnedRanges[0]?.center ?? 0
-                        );
-                    },
-                    duration: { min: 0.15, max: 0.35 },
-                    delay: 0,
-                    ease: 'power2.out',
-                },
-            });
-        };
-
-        const timer = window.setTimeout(setupGlobalSnap, 500);
-
-        return () => {
-            window.clearTimeout(timer);
-            ScrollTrigger.getAll().forEach((st) => st.kill());
-        };
-    }, [walletAddress]);
+        router.replace('/dashboard');
+    }, [ready, walletAddress, role, router]);
 
     const handleConnect = async () => {
         const connected = await connectWallet();
-        if (connected) {
-            router.push('/select-role');
-        }
+        if (connected) router.push('/select-role');
     };
 
     if (ready && walletAddress) {
-        return <div className="-mt-20 min-h-screen bg-[#07070B]" />;
+        return <div className="min-h-screen" />;
     }
 
     return (
-        <div className="-mt-20">
-            <main className="relative min-h-screen w-full overflow-x-hidden bg-[#07070B]">
-                <div className="grain" />
-                <Hero onConnect={handleConnect} connecting={connecting} />
-                {valuePropsConfig.map((props, index) => (
-                    <ValueProp
-                        key={props.sectionId}
-                        {...props}
-                        badge={index === 2 ? 'Zero-knowledge proofs + on-chain settlement' : undefined}
-                    />
-                ))}
-                <div id="cube">
-                    <AlbumCube />
+        <div className="min-h-[calc(100vh-4rem)] flex flex-col">
+            {/* Hero */}
+            <section className="flex-1 flex items-center justify-center px-4 py-20">
+                <div className="max-w-3xl mx-auto text-center space-y-8">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.08)] px-4 py-1.5 text-xs font-medium text-[hsl(var(--primary))]">
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        Built on Aleo
+                    </div>
+
+                    <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-white leading-tight">
+                        Private Procurement,{' '}
+                        <span className="text-[hsl(var(--primary))]">On-Chain</span>
+                    </h1>
+
+                    <p className="text-lg text-[hsl(var(--muted-foreground))] max-w-xl mx-auto leading-relaxed">
+                        Create sealed-bid requests, run auctions, and settle payments with zero-knowledge privacy.
+                        Three tokens supported: ALEO, USDCx, and USAD.
+                    </p>
+
+                    <div className="flex flex-wrap items-center justify-center gap-4">
+                        <Button size="lg" onClick={handleConnect} isLoading={connecting}>
+                            Connect Wallet
+                        </Button>
+                        <Button size="lg" variant="secondary" onClick={() => router.push('/privacy')}>
+                            How it works
+                        </Button>
+                    </div>
                 </div>
-                <div id="gallery">
-                    <ParallaxGallery />
+            </section>
+
+            {/* Features */}
+            <section className="px-4 pb-20">
+                <div className="max-w-5xl mx-auto grid gap-6 md:grid-cols-3">
+                    {features.map((feature) => (
+                        <div
+                            key={feature.title}
+                            className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 space-y-3"
+                        >
+                            <div className="w-10 h-10 rounded-lg bg-[hsl(var(--primary)/0.12)] flex items-center justify-center">
+                                <feature.icon className="h-5 w-5 text-[hsl(var(--primary))]" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-white">{feature.title}</h3>
+                            <p className="text-sm text-[hsl(var(--muted-foreground))] leading-relaxed">{feature.description}</p>
+                        </div>
+                    ))}
                 </div>
-                <div id="tour">
-                    <TourSchedule />
+            </section>
+
+            {/* CTA */}
+            <section className="px-4 pb-20">
+                <div className="max-w-5xl mx-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+                    <div>
+                        <h2 className="text-2xl font-bold text-white">Ready to get started?</h2>
+                        <p className="mt-2 text-[hsl(var(--muted-foreground))]">Connect your wallet and choose a role to begin.</p>
+                    </div>
+                    <Button size="lg" onClick={handleConnect} isLoading={connecting} rightIcon={<ArrowRight className="h-4 w-4" />}>
+                        Enter App
+                    </Button>
                 </div>
-                <div id="contact">
-                    <Footer onConnect={handleConnect} connecting={connecting} />
-                </div>
-            </main>
+            </section>
         </div>
     );
 }

@@ -94,14 +94,19 @@ export function canPerformAction(
 ): { allowed: boolean; reason?: string } {
     const actionRules: Record<string, UserRole[]> = {
         'create_rfq': ['BUYER', 'NEW_USER'],
-        'close_bidding': ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER'],
-        'select_winner': ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER'],
-        'cancel_rfq': ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER'],
+        'select_winner': ['BUYER'],
+        'cancel_rfq_post_deadline': ['BUYER', 'VENDOR', 'NEW_USER'],
         'fund_escrow': ['BUYER'],
-        'release_payment': ['BUYER'],
+        'release_partial_payment': ['BUYER'],
+        'release_final_payment': ['BUYER'],
+        'pay_invoice': ['BUYER'],
+        'configure_platform': ['BUYER'],
+        'import_auction_result': ['BUYER'],
 
         'submit_bid': ['VENDOR', 'NEW_USER'],
-        'reveal_bid': ['VENDOR'],
+        'reveal_bid': ['VENDOR', 'NEW_USER'],
+        'winner_respond': ['VENDOR', 'NEW_USER'],
+        'refund_any_stake': ['VENDOR', 'NEW_USER'],
 
         'view_audit_trail': ['BUYER', 'VENDOR', 'AUDITOR'],
         'export_audit': ['AUDITOR'],

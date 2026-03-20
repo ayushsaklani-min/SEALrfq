@@ -12,7 +12,6 @@ import { EventType, RFQStatus } from '../db/enums';
 import type {
     RFQCreatedEvent,
     BidCommittedEvent,
-    BiddingClosedEvent,
     BidRevealedEvent,
     WinnerSelectedEvent,
     StakeSlashedEvent,
@@ -146,8 +145,6 @@ export class EventProcessor {
             await this.processRFQCreated(tx, event, txId, eventIdx, blockHeight);
         } else if (this.isBidCommittedEvent(event)) {
             await this.processBidCommitted(tx, event, txId, eventIdx, blockHeight);
-        } else if (this.isBiddingClosedEvent(event)) {
-            await this.processBiddingClosed(tx, event);
         } else if (this.isBidRevealedEvent(event)) {
             await this.processBidRevealed(tx, event, blockHeight);
         } else if (this.isWinnerSelectedEvent(event)) {
@@ -210,16 +207,6 @@ export class EventProcessor {
         });
     }
 
-    private async processBiddingClosed(
-        tx: any,
-        event: BiddingClosedEvent
-    ): Promise<void> {
-        await tx.rFQ.update({
-            where: { id: event.rfq_id },
-            data: { status: RFQStatus.CLOSED },
-        });
-    }
-
     private async processBidRevealed(
         tx: any,
         event: BidRevealedEvent,
@@ -232,6 +219,11 @@ export class EventProcessor {
                 isRevealed: true,
                 revealedBlock: blockHeight,
             },
+        });
+
+        await tx.rFQ.update({
+            where: { id: event.rfq_id },
+            data: { status: RFQStatus.REVEAL },
         });
     }
 
@@ -404,7 +396,7 @@ export class EventProcessor {
 
             // 2. Revert RFQs whose status changed in rolled-back blocks.
             //    We restore them to ESCROW_FUNDED if the escrow still exists,
-            //    WINNER_SELECTED if a winner bid exists, CLOSED if bids were
+            //    WINNER_SELECTED if a winner bid exists, REVEAL if bids were
             //    revealed, OPEN otherwise.
             const affectedRFQIds = [
                 ...new Set([
@@ -450,11 +442,11 @@ export class EventProcessor {
                 } else if (winnerBid) {
                     newStatus = 'WINNER_SELECTED';
                 } else if (revealedBids > 0) {
-                    newStatus = 'CLOSED';
+                    newStatus = RFQStatus.REVEAL;
                 } else if (anyBids > 0) {
-                    newStatus = 'OPEN';
+                    newStatus = RFQStatus.OPEN;
                 } else {
-                    newStatus = 'OPEN';
+                    newStatus = RFQStatus.OPEN;
                 }
 
                 if (rfq.status !== newStatus) {
@@ -493,7 +485,6 @@ export class EventProcessor {
         const mapping: Record<string, EventType> = {
             create_rfq: EventType.RFQ_CREATED,
             submit_bid_commit: EventType.BID_COMMITTED,
-            close_bidding: EventType.BIDDING_CLOSED,
             reveal_bid: EventType.BID_REVEALED,
             select_winner: EventType.WINNER_SELECTED,
             slash_non_revealer: EventType.STAKE_SLASHED,
@@ -511,10 +502,6 @@ export class EventProcessor {
 
     private isBidCommittedEvent(event: ContractEvent): event is BidCommittedEvent {
         return 'commitment_hash' in event && 'stake' in event;
-    }
-
-    private isBiddingClosedEvent(event: ContractEvent): event is BiddingClosedEvent {
-        return 'buyer' in event && !('amount' in event) && !('revealed_amount' in event);
     }
 
     private isBidRevealedEvent(event: ContractEvent): event is BidRevealedEvent {

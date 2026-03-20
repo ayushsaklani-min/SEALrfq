@@ -279,7 +279,7 @@ model Transaction {
   // Transaction identification
   txHash            String?     @unique // Aleo tx hash (null until submitted)
   transition        String      // Function name
-  programId         String      @default("sealrfq_v5.aleo")
+  programId         String      @default("sealrfq_v17.aleo")
   
   // State Machine (REQUIREMENT 1: strict one-way transitions)
   status            String

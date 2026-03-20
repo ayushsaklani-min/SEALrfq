@@ -13,7 +13,7 @@ type LeoExecuteResult = {
     rawOutput: string;
 };
 
-const DEFAULT_PROGRAM_ID = process.env.ALEO_PROGRAM_ID || 'sealrfq_v5.aleo';
+const DEFAULT_PROGRAM_ID = process.env.ALEO_PROGRAM_ID || 'sealrfq_v17.aleo';
 const DEFAULT_NETWORK = process.env.ALEO_NETWORK || 'testnet';
 const DEFAULT_ENDPOINT = process.env.ALEO_RPC_URL || 'https://api.explorer.provable.com/v1';
 const DEFAULT_CONSENSUS = process.env.ALEO_CONSENSUS_VERSION || '12';

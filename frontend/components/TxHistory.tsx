@@ -1,15 +1,9 @@
-/**
- * Transaction History Component
- * 
- * Displays list of transactions with filtering and canonical action grouping.
- */
-
 'use client';
 
 import { useState, useEffect } from 'react';
 import { TxStatusView } from './TxStatus';
-import Link from 'next/link';
 import { authenticatedFetch } from '@/lib/authFetch';
+import { CheckCircle, Clock, XCircle, AlertTriangle, FileText } from 'lucide-react';
 
 type TxStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'REJECTED' | 'EXPIRED';
 
@@ -24,16 +18,9 @@ interface Transaction {
 }
 
 interface TxHistoryProps {
-    /** Filter by status */
     filterStatus?: TxStatus | 'ALL';
-
-    /** Filter by transition */
     filterTransition?: string;
-
-    /** Limit number of results */
     limit?: number;
-
-    /** Group by canonical key */
     groupByCanonical?: boolean;
 }
 
@@ -75,73 +62,68 @@ export function TxHistory({
     }, [filterStatus, filterTransition, limit]);
 
     if (loading) {
-        return <div className="p-8 text-center text-gray-400 animate-pulse">Loading transaction history...</div>;
+        return <div className="p-8 text-center text-[hsl(var(--muted-foreground))]">Loading transaction history...</div>;
     }
 
     if (error) {
-        return <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg">Error: {error}</div>;
+        return <div className="p-4 rounded-lg border border-red-500/25 bg-red-500/8 text-sm text-red-300">{error}</div>;
     }
 
     if (transactions.length === 0) {
-        return <div className="p-8 text-center text-gray-500 border border-white/5 rounded-xl bg-white/5">No transactions found</div>;
+        return <div className="p-8 text-center text-[hsl(var(--muted-foreground))] border border-dashed border-[hsl(var(--border))] rounded-xl bg-[hsl(var(--secondary))]">No transactions found</div>;
     }
 
-    // Group by canonical key if requested
     const grouped = groupByCanonical
         ? groupByCanonicalKey(transactions)
         : transactions.map(tx => ({ canonical: tx.canonicalTxKey, attempts: [tx] }));
 
     return (
-        <div className="glass rounded-xl p-6 border border-white/5 bg-gray-900/50 backdrop-blur-md">
-            <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-                <h3 className="text-xl font-bold font-display bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">Transaction History</h3>
-                <div className="w-full sm:w-auto">
-                    {/* Status filter */}
-                    <select
-                        value={filterStatus}
-                        onChange={(e) => window.location.href = `?status=${e.target.value}`}
-                        className="bg-black/40 border border-white/10 text-gray-300 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 backdrop-blur-sm cursor-pointer hover:bg-black/60 transition-colors"
-                    >
-                        <option value="ALL">All Statuses</option>
-                        <option value="PREPARED">Prepared</option>
-                        <option value="SUBMITTED">Submitted</option>
-                        <option value="CONFIRMED">Confirmed</option>
-                        <option value="REJECTED">Rejected</option>
-                        <option value="EXPIRED">Expired</option>
-                    </select>
-                </div>
+        <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5">
+            <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
+                <h3 className="text-base font-semibold text-white">Transaction History</h3>
+                <select
+                    value={filterStatus}
+                    onChange={(e) => window.location.href = `?status=${e.target.value}`}
+                    className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] px-3 py-2 text-sm text-white"
+                >
+                    <option value="ALL">All Statuses</option>
+                    <option value="PREPARED">Prepared</option>
+                    <option value="SUBMITTED">Submitted</option>
+                    <option value="CONFIRMED">Confirmed</option>
+                    <option value="REJECTED">Rejected</option>
+                    <option value="EXPIRED">Expired</option>
+                </select>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
                 {grouped.map(group => (
                     <div key={group.canonical} className="space-y-2">
                         {groupByCanonical && group.attempts.length > 1 && (
-                            <div className="flex justify-between items-center text-xs uppercase tracking-wider text-gray-500 font-semibold px-2">
+                            <div className="flex justify-between items-center text-xs uppercase tracking-wider text-[hsl(var(--muted-foreground))] font-semibold px-2">
                                 <span>Action: {group.canonical}</span>
-                                <span className="bg-white/5 px-2 py-0.5 rounded text-white/50 border border-white/5">{group.attempts.length} attempts</span>
+                                <span className="bg-[hsl(var(--secondary))] px-2 py-0.5 rounded text-[hsl(var(--muted-foreground))] border border-[hsl(var(--border))]">{group.attempts.length} attempts</span>
                             </div>
                         )}
 
                         {group.attempts.map(tx => (
-                            <div key={tx.id} className="relative group">
+                            <div key={tx.id}>
                                 <div
-                                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 transition-all cursor-pointer shadow-sm hover:shadow-md"
+                                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 rounded-lg bg-[hsl(var(--secondary))] hover:bg-[hsl(var(--muted))] border border-[hsl(var(--border))] transition-colors cursor-pointer"
                                     onClick={() => setSelectedTx(selectedTx === tx.idempotencyKey ? null : tx.idempotencyKey)}
                                 >
-                                    <div className="flex items-center space-x-4 mb-2 sm:mb-0">
-                                        <div className={`text-2xl w-10 h-10 flex items-center justify-center rounded-full bg-black/20 ${getStatusColor(tx.status)}`}>
+                                    <div className="flex items-center gap-3 mb-2 sm:mb-0">
+                                        <div className={`w-8 h-8 flex items-center justify-center rounded-lg ${getStatusBg(tx.status)}`}>
                                             {statusIcon(tx.status)}
                                         </div>
                                         <div className="flex flex-col">
-                                            <span className="font-medium text-white group-hover:text-primary-300 transition-colors">{tx.transition}</span>
-                                            <span className="text-xs text-gray-500">{formatTimestamp(tx.preparedAt)}</span>
+                                            <span className="text-sm font-medium text-white">{tx.transition}</span>
+                                            <span className="text-xs text-[hsl(var(--muted-foreground))]">{formatTimestamp(tx.preparedAt)}</span>
                                         </div>
                                     </div>
 
                                     <div className="flex items-center w-full sm:w-auto justify-end">
                                         {tx.confirmedAt && (
-                                            <span className="inline-flex items-center bg-green-500/10 text-green-400 text-xs px-2.5 py-1 rounded-full border border-green-500/20 font-medium">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>
+                                            <span className="inline-flex items-center text-emerald-400 text-xs px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 font-medium">
                                                 Confirmed
                                             </span>
                                         )}
@@ -149,7 +131,7 @@ export function TxHistory({
                                 </div>
 
                                 {selectedTx === tx.idempotencyKey && (
-                                    <div className="mt-2 p-4 bg-black/40 rounded-lg border border-white/5 animate-slide-up shadow-inner">
+                                    <div className="mt-2 p-3 bg-[hsl(var(--secondary))] rounded-lg border border-[hsl(var(--border))]">
                                         <TxStatusView
                                             idempotencyKey={tx.idempotencyKey}
                                             canonicalTxKey={tx.canonicalTxKey}
@@ -166,12 +148,13 @@ export function TxHistory({
     );
 }
 
-function getStatusColor(status: TxStatus): string {
+function getStatusBg(status: TxStatus): string {
     switch (status) {
-        case 'CONFIRMED': return 'text-green-400';
-        case 'REJECTED': return 'text-red-400';
-        case 'SUBMITTED': return 'text-blue-400';
-        default: return 'text-gray-400';
+        case 'CONFIRMED': return 'bg-emerald-500/15 text-emerald-400';
+        case 'REJECTED': return 'bg-red-500/15 text-red-400';
+        case 'SUBMITTED': return 'bg-blue-500/15 text-blue-400';
+        case 'EXPIRED': return 'bg-amber-500/15 text-amber-400';
+        default: return 'bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]';
     }
 }
 
@@ -192,15 +175,14 @@ function groupByCanonicalKey(transactions: Transaction[]): Array<{ canonical: st
     }));
 }
 
-function statusIcon(status: TxStatus): string {
-    const icons = {
-        PREPARED: '📝',
-        SUBMITTED: '⏳',
-        CONFIRMED: '✓',
-        REJECTED: '✗',
-        EXPIRED: '⏰',
-    };
-    return icons[status] || '?';
+function statusIcon(status: TxStatus) {
+    switch (status) {
+        case 'PREPARED': return <FileText className="w-4 h-4" />;
+        case 'SUBMITTED': return <Clock className="w-4 h-4" />;
+        case 'CONFIRMED': return <CheckCircle className="w-4 h-4" />;
+        case 'REJECTED': return <XCircle className="w-4 h-4" />;
+        case 'EXPIRED': return <AlertTriangle className="w-4 h-4" />;
+    }
 }
 
 function formatTimestamp(timestamp: string): string {
@@ -208,7 +190,6 @@ function formatTimestamp(timestamp: string): string {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
 
-    // Show relative time if < 24h
     if (diff < 24 * 60 * 60 * 1000) {
         const minutes = Math.floor(diff / (60 * 1000));
         if (minutes < 60) return `${minutes}m ago`;

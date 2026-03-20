@@ -21,7 +21,7 @@ export default function DashboardPage() {
     }, [ready, router, walletAddress, role]);
 
     if (!ready || !walletAddress || !role || role === 'NEW_USER') {
-        return <div className="min-h-screen bg-black" />;
+        return <div className="min-h-screen" />;
     }
 
     return <Dashboard />;

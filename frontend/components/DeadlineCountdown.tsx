@@ -2,11 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { Clock, CheckCircle, AlertTriangle } from 'lucide-react';
+import { TIMING } from '@/lib/sealProtocol';
 
 const ALEO_RPC = process.env.NEXT_PUBLIC_ALEO_RPC_URL || 'https://api.explorer.provable.com/v1';
 const ALEO_NETWORK = process.env.NEXT_PUBLIC_ALEO_NETWORK || 'testnet';
-const APPROX_BLOCK_TIME_S = 5; // ~5 seconds per block on testnet
-const POLL_INTERVAL_MS = 15_000; // poll every 15s
 
 async function fetchBlockHeight(): Promise<number | null> {
     const urls = [
@@ -26,9 +25,7 @@ async function fetchBlockHeight(): Promise<number | null> {
                 const h = Number((await res.text()).trim());
                 if (Number.isFinite(h) && h > 0) return h;
             }
-        } catch {
-            // try next
-        }
+        } catch { /* try next */ }
     }
     return null;
 }
@@ -44,14 +41,11 @@ function formatTimeRemaining(seconds: number): string {
 }
 
 interface Props {
-    /** Target block height (deadline) */
     deadlineBlock: number;
-    /** Label shown before the countdown (e.g. "Bidding closes in") */
     label: string;
-    /** Label shown when deadline has passed */
     passedLabel?: string;
-    /** Called once when deadline is reached */
     onDeadlineReached?: () => void;
+    urgentWithinBlocks?: number;
 }
 
 export default function DeadlineCountdown({
@@ -59,83 +53,59 @@ export default function DeadlineCountdown({
     label,
     passedLabel = 'Deadline reached',
     onDeadlineReached,
+    urgentWithinBlocks = TIMING.SNIPE_WINDOW_BLOCKS,
 }: Props) {
     const [currentBlock, setCurrentBlock] = useState<number | null>(null);
     const [error, setError] = useState(false);
 
     const poll = useCallback(async () => {
         const h = await fetchBlockHeight();
-        if (h !== null) {
-            setCurrentBlock(h);
-            setError(false);
-        } else {
-            setError(true);
-        }
+        if (h !== null) { setCurrentBlock(h); setError(false); } else { setError(true); }
     }, []);
 
     useEffect(() => {
         poll();
-        const id = setInterval(poll, POLL_INTERVAL_MS);
+        const id = setInterval(poll, 15_000);
         return () => clearInterval(id);
     }, [poll]);
 
-    // Fire callback once when deadline is reached
     useEffect(() => {
-        if (currentBlock !== null && currentBlock >= deadlineBlock) {
-            onDeadlineReached?.();
-        }
+        if (currentBlock !== null && currentBlock >= deadlineBlock) onDeadlineReached?.();
     }, [currentBlock, deadlineBlock, onDeadlineReached]);
 
     if (currentBlock === null) {
         return (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
+            <div className="flex items-center gap-2 text-sm text-[hsl(var(--muted-foreground))]">
                 <Clock className="w-4 h-4 animate-pulse" />
-                {error ? 'Unable to fetch block height' : 'Loading block height...'}
+                {error ? 'Unable to fetch block height' : 'Loading...'}
             </div>
         );
     }
 
     const blocksRemaining = deadlineBlock - currentBlock;
     const isPassed = blocksRemaining <= 0;
-    const isUrgent = !isPassed && blocksRemaining <= 20; // ~100 seconds
-    const secondsRemaining = blocksRemaining * APPROX_BLOCK_TIME_S;
+    const isUrgent = !isPassed && blocksRemaining <= urgentWithinBlocks;
+    const secondsRemaining = Math.round((blocksRemaining * TIMING.BLOCK_MS) / 1000);
 
     if (isPassed) {
         return (
-            <div className="flex items-center gap-2 rounded-xl px-4 py-3 border border-green-500/30 bg-green-500/10 text-green-300 text-sm">
-                <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                <div>
-                    <span className="font-medium">{passedLabel}</span>
-                    <span className="text-green-300/60 ml-2">
-                        (block {currentBlock.toLocaleString()} / {deadlineBlock.toLocaleString()})
-                    </span>
-                </div>
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-sm text-emerald-300">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span className="font-medium">{passedLabel}</span>
             </div>
         );
     }
 
     return (
-        <div
-            className={`flex items-center gap-2 rounded-xl px-4 py-3 border text-sm ${
-                isUrgent
-                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                    : 'border-cyan-400/20 bg-cyan-400/5 text-cyan-300'
-            }`}
-        >
-            {isUrgent ? (
-                <AlertTriangle className="w-4 h-4 flex-shrink-0 animate-pulse" />
-            ) : (
-                <Clock className="w-4 h-4 flex-shrink-0" />
-            )}
-            <div>
-                <span className="font-medium">{label}</span>{' '}
-                <span className="font-mono font-bold">
-                    ~{formatTimeRemaining(secondsRemaining)}
-                </span>
-                <span className="opacity-60 ml-2">
-                    ({blocksRemaining} blocks remaining — block {currentBlock.toLocaleString()} / {deadlineBlock.toLocaleString()})
-                </span>
-            </div>
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+            isUrgent
+                ? 'border-amber-500/25 bg-amber-500/8 text-amber-300'
+                : 'border-[hsl(var(--border))] bg-[hsl(var(--secondary))] text-[hsl(var(--muted-foreground))]'
+        }`}>
+            {isUrgent ? <AlertTriangle className="w-4 h-4 shrink-0 animate-pulse" /> : <Clock className="w-4 h-4 shrink-0" />}
+            <span>{label}</span>
+            <span className="font-mono font-semibold text-white">~{formatTimeRemaining(secondsRemaining)}</span>
+            <span className="text-xs opacity-60">({blocksRemaining} blocks)</span>
         </div>
     );
 }

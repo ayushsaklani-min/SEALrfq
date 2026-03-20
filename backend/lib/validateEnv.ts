@@ -29,7 +29,7 @@ const RULES: EnvRule[] = [
     {
         name: 'ALEO_PROGRAM_ID',
         required: true,
-        description: 'Deployed Aleo program ID (e.g. sealrfq_v9.aleo)',
+        description: 'Deployed Aleo program ID (e.g. sealrfq_v17.aleo)',
     },
     {
         name: 'ALEO_NETWORK',

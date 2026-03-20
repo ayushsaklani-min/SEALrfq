@@ -68,13 +68,24 @@ function classifyWalletError(raw: string, providerFound: boolean): WalletError {
     );
 }
 const DEFAULT_NETWORK = process.env.NEXT_PUBLIC_ALEO_NETWORK || 'testnet';
-// sealrfq_v9.aleo  = demo contract (short timers, for demo video)
-// sealrfq_v10.aleo = production testnet contract (market-ready timers)
-const DEFAULT_PROGRAM_ID = process.env.NEXT_PUBLIC_ALEO_PROGRAM_ID || 'sealrfq_v10.aleo';
+const DEFAULT_PROGRAM_ID = process.env.NEXT_PUBLIC_ALEO_PROGRAM_ID || 'sealrfq_v17.aleo';
+const DEFAULT_VICKREY_PROGRAM_ID =
+    process.env.NEXT_PUBLIC_ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v2.aleo';
+const DEFAULT_DUTCH_PROGRAM_ID =
+    process.env.NEXT_PUBLIC_ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v4.aleo';
 // Shield wallet accepts: "mainnet" | "testnet" | "testnet3" (NOT "testnetbeta")
 const SHIELD_CHAIN_ID = DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
 const PROGRAM_ALLOWLIST = Array.from(
-    new Set([DEFAULT_PROGRAM_ID, 'sealrfq_v9.aleo', 'sealrfq_v10.aleo', 'credits.aleo'])
+    new Set([
+        DEFAULT_PROGRAM_ID,
+        'sealrfq_v17.aleo',
+        'sealrfq_v16.aleo',
+        'credits.aleo',
+        'test_usdcx_stablecoin.aleo',
+        'test_usad_stablecoin.aleo',
+        DEFAULT_VICKREY_PROGRAM_ID,
+        DEFAULT_DUTCH_PROGRAM_ID,
+    ])
 );
 
 type NativeShield = {

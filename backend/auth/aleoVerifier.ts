@@ -58,6 +58,16 @@ export async function verifyAleoWalletSignature(
     message: string,
     rawSignature: string
 ): Promise<boolean> {
+    // Dev-only bypass: accept "insecure_signature" when flag is enabled.
+    // This allows CLI/test scripts to authenticate without a real wallet.
+    if (
+        process.env.ALLOW_INSECURE_WALLET_SIGNATURE === 'true' &&
+        process.env.NODE_ENV !== 'production' &&
+        rawSignature === 'insecure_signature'
+    ) {
+        return true;
+    }
+
     const { Address } = await loadAleoSdk();
     const address = Address.from_string(walletAddress);
     const signature = await parseSignature(rawSignature);

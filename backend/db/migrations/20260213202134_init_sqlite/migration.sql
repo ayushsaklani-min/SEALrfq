@@ -134,7 +134,7 @@ CREATE TABLE "Transaction" (
     "canonicalTxKey" TEXT NOT NULL,
     "txHash" TEXT,
     "transition" TEXT NOT NULL,
-    "programId" TEXT NOT NULL DEFAULT 'sealrfq_v5.aleo',
+    "programId" TEXT NOT NULL DEFAULT 'sealrfq_v17.aleo',
     "status" TEXT NOT NULL,
     "statusHistory" TEXT NOT NULL DEFAULT '[]',
     "preparedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

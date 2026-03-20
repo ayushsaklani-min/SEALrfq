@@ -10,7 +10,7 @@ import type { ChainState } from '../tx/reconciliation';
 
 const ENDPOINT  = process.env.ALEO_RPC_URL  || 'https://api.explorer.provable.com/v1';
 const NETWORK   = process.env.ALEO_NETWORK  || 'testnet';
-const PROGRAM   = process.env.ALEO_PROGRAM_ID || 'sealrfq_v9.aleo';
+const PROGRAM   = process.env.ALEO_PROGRAM_ID || 'sealrfq_v17.aleo';
 const TIMEOUT_MS = Number(process.env.ALEO_RPC_TIMEOUT_MS || '10000');
 
 async function rpcFetch(path: string): Promise<any | null> {
@@ -110,8 +110,8 @@ export class AleoChainState implements ChainState {
 
         // Query on-chain program mapping to see if this RFQ/bid exists.
         // For create_rfq, check rfq_status mapping.
-        // For submit_bid_commit, check bid_commitment mapping.
-        // For others, we'd need transition-specific logic.
+        // For submit_bid_commit, check bid_commitments mapping.
+        // For others, use transition-specific materialization checks.
         const mappingKey = getMappingKeyForTransition(transition, subjectId);
         if (!mappingKey) {
             return { executed: false };
@@ -140,7 +140,11 @@ function getMappingKeyForTransition(
         case 'fund_escrow':
             return { mapping: 'escrow_amounts', key: subjectId };
         case 'select_winner':
-            return { mapping: 'rfq_winner', key: subjectId };
+            return { mapping: 'rfq_winner_address', key: subjectId };
+        case 'winner_respond':
+            return { mapping: 'rfq_winner_accepted', key: subjectId };
+        case 'import_auction_result':
+            return { mapping: 'auction_source', key: subjectId };
         default:
             return null;
     }
