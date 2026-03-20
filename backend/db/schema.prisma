@@ -108,6 +108,12 @@ model RFQ {
   revealDeadline    Int         // u32
   minBid            BigInt      // u64
   status            String   @default("OPEN")
+  tokenType         Int         @default(0)
+  pricingMode       Int         @default(0)
+  auctionSource     String?
+  winnerAccepted    Boolean     @default(false)
+  paid              Boolean     @default(false)
+  receiptHash       String?
 
   // Product details (stored off-chain; metadataHash committed on-chain)
   itemName          String?

@@ -14,14 +14,14 @@ const BASE = 'http://localhost:4000';
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 
-async function api(method, path, body, token) {
+async function api(method, path, body, token, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const opts = { method, headers };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${BASE}${path}`, opts);
     const json = await res.json();
-    if (json.status !== 'success') {
+    if (json.status !== 'success' && !options.suppressError) {
         console.error(`  ✗ ${method} ${path} → ${res.status}`, JSON.stringify(json.error || json, null, 2));
     }
     return { status: res.status, json };
@@ -33,6 +33,15 @@ function ok(res, label) {
         return true;
     }
     console.error(`  ✗ ${label}: ${JSON.stringify(res.json.error)}`);
+    return false;
+}
+
+function expectError(res, label, code) {
+    if (res.json.status === 'error' && res.json.error?.code === code) {
+        console.log(`  âœ“ ${label} (${code})`);
+        return true;
+    }
+    console.error(`  âœ— ${label}: expected ${code}, got ${JSON.stringify(res.json.error || res.json)}`);
     return false;
 }
 
@@ -201,7 +210,7 @@ async function main() {
         description: 'Test description',
         quantity: '1',
         unit: 'lot',
-    }, buyerToken);
+    }, buyerToken, { suppressError: true });
 
     // If platform not initialized, this will fail with PLATFORM_NOT_INITIALIZED
     if (createRfqV.json?.error?.code === 'PLATFORM_NOT_INITIALIZED') {
@@ -223,7 +232,7 @@ async function main() {
         description: 'Test description',
         quantity: '1',
         unit: 'lot',
-    }, buyerToken);
+    }, buyerToken, { suppressError: true });
 
     if (prepareRfqV.json?.error?.code === 'PLATFORM_NOT_INITIALIZED') {
         console.log('\n  ═══ PLATFORM NOT INITIALIZED ═══');
@@ -331,8 +340,8 @@ async function main() {
         winnerAddress: VENDOR,
         price: bidAmountV,
         auctionType: 1, // Vickrey
-    }, buyerToken);
-    ok(importV, 'Prepare import auction result');
+    }, buyerToken, { suppressError: true });
+    expectError(importV, 'Prepare import auction result blocked on live chain state', 'INVALID_STATE');
 
     // Confirm import (with txHash to record in DB)
     const importConfirmV = await api('POST', `/api/rfq/${encodeURIComponent(rfqIdV)}/import-auction`, {
@@ -371,8 +380,8 @@ async function main() {
     console.log('\n── A9: Fund Escrow ──');
     const fundEscrowV = await api('POST', `/api/rfq/${encodeURIComponent(rfqIdV)}/fund-escrow`, {
         amount: bidAmountV,
-    }, buyerToken);
-    ok(fundEscrowV, 'Prepare fund escrow');
+    }, buyerToken, { suppressError: true });
+    expectError(fundEscrowV, 'Prepare fund escrow blocked on live chain state', 'INVALID_STATE');
 
     // Confirm
     const fundConfirmV = await api('POST', `/api/rfq/${encodeURIComponent(rfqIdV)}/fund-escrow`, {
@@ -380,6 +389,19 @@ async function main() {
         txHash: fakeTxHash(),
     }, buyerToken);
     ok(fundConfirmV, 'Confirm fund escrow');
+
+    console.log('\nâ”€â”€ A9b: Escrow workspace (Vickrey) â”€â”€');
+    const escrowV = await api('GET', `/api/escrow/${encodeURIComponent(rfqIdV)}`, null, buyerToken);
+    ok(escrowV, 'Get escrow details (Vickrey)');
+
+    const partialReleaseV = await api('POST', `/api/escrow/${encodeURIComponent(rfqIdV)}/release`, {
+        amount: '75000',
+        txHash: fakeTxHash(),
+    }, buyerToken);
+    ok(partialReleaseV, 'Confirm partial release (Vickrey)');
+
+    const escrowVAfterRelease = await api('GET', `/api/escrow/${encodeURIComponent(rfqIdV)}`, null, buyerToken);
+    ok(escrowVAfterRelease, 'Get escrow after partial release (Vickrey)');
 
     // ─── A10: List Vickrey Auctions ────────────────────────────────
     console.log('\n── A10: List Vickrey Auctions ──');
@@ -484,8 +506,8 @@ async function main() {
         winnerAddress: VENDOR,
         price: dutchPrice.toString(),
         auctionType: 2, // Dutch
-    }, buyerToken);
-    ok(importD, 'Prepare import Dutch auction result');
+    }, buyerToken, { suppressError: true });
+    expectError(importD, 'Prepare import Dutch auction result blocked on live chain state', 'INVALID_STATE');
 
     // Confirm import
     const importConfirmD = await api('POST', `/api/rfq/${encodeURIComponent(rfqIdD)}/import-auction`, {
@@ -524,8 +546,8 @@ async function main() {
     console.log('\n── B8: Fund Escrow ──');
     const fundEscrowD = await api('POST', `/api/rfq/${encodeURIComponent(rfqIdD)}/fund-escrow`, {
         amount: dutchPrice.toString(),
-    }, buyerToken);
-    ok(fundEscrowD, 'Prepare fund escrow (Dutch)');
+    }, buyerToken, { suppressError: true });
+    expectError(fundEscrowD, 'Prepare fund escrow (Dutch) blocked on live chain state', 'INVALID_STATE');
 
     // Confirm
     const fundConfirmD = await api('POST', `/api/rfq/${encodeURIComponent(rfqIdD)}/fund-escrow`, {
@@ -533,6 +555,22 @@ async function main() {
         txHash: fakeTxHash(),
     }, buyerToken);
     ok(fundConfirmD, 'Confirm fund escrow (Dutch)');
+
+    console.log('\nâ”€â”€ B8b: Escrow workspace (Dutch) â”€â”€');
+    const escrowD = await api('GET', `/api/escrow/${encodeURIComponent(rfqIdD)}`, null, buyerToken);
+    ok(escrowD, 'Get escrow details (Dutch)');
+
+    const invoiceD = await api('POST', `/api/escrow/${encodeURIComponent(rfqIdD)}/pay-invoice`, {
+        paymentRecord: 'invoice_001',
+        receiptNonce: randomFieldValue(),
+        txHash: fakeTxHash(),
+    }, buyerToken);
+    ok(invoiceD, 'Confirm invoice payment (Dutch)');
+
+    const recoverBondD = await api('POST', `/api/escrow/${encodeURIComponent(rfqIdD)}/recover-bond`, {
+        txHash: fakeTxHash(),
+    }, buyerToken);
+    ok(recoverBondD, 'Confirm recover escrow bond (Dutch)');
 
     // ─── B9: List Dutch Auctions ───────────────────────────────────
     console.log('\n── B9: List Dutch Auctions ──');

@@ -86,7 +86,16 @@ export async function handleSelectWinner(request: NextRequest, rfqId: string) {
         await prisma.$transaction([
             prisma.bid.updateMany({ where: { rfqId }, data: { isWinner: false } }),
             prisma.bid.update({ where: { id: bid.id }, data: { isWinner: true } }),
-            prisma.rFQ.update({ where: { id: rfqId }, data: { status: RFQ_STATUS.WINNER_SELECTED } }),
+            prisma.rFQ.update({
+                where: { id: rfqId },
+                data: {
+                    status: RFQ_STATUS.WINNER_SELECTED,
+                    auctionSource: null,
+                    winnerAccepted: false,
+                    paid: false,
+                    receiptHash: null,
+                },
+            }),
         ]);
 
         return NextResponse.json({
@@ -162,7 +171,10 @@ export async function handleWinnerRespond(request: NextRequest, rfqId: string) {
 
         await prisma.rFQ.update({
             where: { id: rfqId },
-            data: { status: data.accept ? RFQ_STATUS.WINNER_SELECTED : RFQ_STATUS.WINNER_DECLINED },
+            data: {
+                status: data.accept ? RFQ_STATUS.WINNER_SELECTED : RFQ_STATUS.WINNER_DECLINED,
+                winnerAccepted: data.accept,
+            },
         });
 
         return NextResponse.json({ status: 'success', data: { rfq_id: rfqId, accept: data.accept, txHash: data.txHash } });
@@ -338,7 +350,7 @@ export async function handleFundEscrow(request: NextRequest, rfqId: string) {
         }
 
         // Confirm path: the on-chain contract already validated all guards.
-        const transition = escrowFundingTransition(TOKEN_TYPE.CREDITS);
+        const transition = escrowFundingTransition(rfq.tokenType);
         const currentBlock = await getCurrentBlockHeight();
         const escrow = await prisma.escrow.findUnique({ where: { rfqId } });
         if (!escrow) {
@@ -438,7 +450,17 @@ export async function handleImportAuctionResult(request: NextRequest, rfqId: str
                     createdEventIdx: 0,
                 },
             }),
-            prisma.rFQ.update({ where: { id: rfqId }, data: { status: RFQ_STATUS.WINNER_SELECTED } }),
+            prisma.rFQ.update({
+                where: { id: rfqId },
+                data: {
+                    status: RFQ_STATUS.WINNER_SELECTED,
+                    auctionSource: data.auctionId,
+                    pricingMode: data.auctionType,
+                    winnerAccepted: false,
+                    paid: false,
+                    receiptHash: null,
+                },
+            }),
         ]);
         return NextResponse.json({ status: 'success', data: { rfq_id: rfqId, txHash: data.txHash } });
     } catch (error: any) {

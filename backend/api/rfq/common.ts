@@ -121,6 +121,12 @@ export async function augmentRFQ(rfq: any) {
     // contract always creates with status >= 1).  Fall back to DB state so the
     // API returns meaningful values while the on-chain tx is pending / in tests.
     const onChainExists = chain.statusCode !== 0;
+    const tokenType = onChainExists ? chain.escrowToken : (rfq.tokenType ?? chain.escrowToken);
+    const pricingMode = onChainExists ? chain.pricingMode : (rfq.pricingMode ?? chain.pricingMode);
+    const paid = onChainExists ? chain.paid : Boolean(rfq.paid);
+    const auctionSource = onChainExists ? chain.auctionSource : (rfq.auctionSource ?? null);
+    const receiptHash = onChainExists ? chain.receiptHash : (rfq.receiptHash ?? null);
+    const winnerAccepted = onChainExists ? chain.winnerAccepted : Boolean(rfq.winnerAccepted);
 
     return {
         ...rfq,
@@ -132,28 +138,28 @@ export async function augmentRFQ(rfq: any) {
         minBidCount: chain.minBidCount,
         bidCount: chain.bidCount,
         flatStake: chain.flatStake,
-        tokenType: chain.escrowToken,
-        tokenSymbol: tokenSymbol(chain.escrowToken),
-        pricingMode: onChainExists ? chain.pricingMode : (rfq.pricingMode ?? chain.pricingMode),
+        tokenType,
+        tokenSymbol: tokenSymbol(tokenType),
+        pricingMode,
         creator: chain.creator ?? rfq.buyer,
         lifecycleBlock: chain.lifecycleBlock,
-        paid: chain.paid,
+        paid,
         platformPaused: platform.paused,
         platformInitialized: platform.initialized,
         feeBps: platform.feeBps,
-        auctionSource: chain.auctionSource,
-        receiptHash: chain.receiptHash,
+        auctionSource,
+        receiptHash,
         settlementProof: chain.settlementProof,
         paymentProof: chain.paymentProof,
-        winnerAccepted: chain.winnerAccepted,
+        winnerAccepted,
         winningBidId: winningBid?.id ?? null,
         winningVendor: winningBid?.vendor ?? chain.winner ?? null,
         winningBidAmount: winningBid?.revealedAmount?.toString() ?? onChainWinningAmount,
         winningStake: winningBid?.stake?.toString() ?? null,
         estimatedFundEscrowFee: estimateFee(
-            chain.escrowToken === TOKEN_TYPE.USDCX
+            tokenType === TOKEN_TYPE.USDCX
                 ? 'fund_escrow_usdcx'
-                : chain.escrowToken === TOKEN_TYPE.USAD
+                : tokenType === TOKEN_TYPE.USAD
                   ? 'fund_escrow_usad'
                   : 'fund_escrow',
         ).toString(),

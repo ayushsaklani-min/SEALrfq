@@ -244,19 +244,36 @@ export async function handleGetMyBids(request: NextRequest) {
         where: { vendor: auth.walletAddress },
         orderBy: { createdAt: 'desc' },
     });
+    const rfqIds = Array.from(new Set(bids.map((bid) => bid.rfqId)));
+    const rfqs = await prisma.rFQ.findMany({
+        where: { id: { in: rfqIds } },
+        select: {
+            id: true,
+            status: true,
+            biddingDeadline: true,
+            revealDeadline: true,
+            tokenType: true,
+            pricingMode: true,
+            paid: true,
+            winnerAccepted: true,
+        },
+    });
+    const rfqById = new Map(rfqs.map((rfq) => [rfq.id, rfq]));
 
     const enriched = await Promise.all(
         bids.map(async (bid) => {
             const chain = await getRfqChainState(bid.rfqId);
+            const rfq = rfqById.get(bid.rfqId);
+            const onChainExists = chain.statusCode !== 0;
             return {
                 ...serializeBid(bid),
-                rfqStatus: chain.status,
-                revealDeadline: chain.revealDeadline,
-                biddingDeadline: chain.biddingDeadline,
-                tokenType: chain.escrowToken,
-                pricingMode: chain.pricingMode,
-                paid: chain.paid,
-                winnerAccepted: chain.winnerAccepted,
+                rfqStatus: onChainExists ? chain.status : (rfq?.status ?? chain.status),
+                revealDeadline: onChainExists ? chain.revealDeadline : (rfq?.revealDeadline ?? chain.revealDeadline),
+                biddingDeadline: onChainExists ? chain.biddingDeadline : (rfq?.biddingDeadline ?? chain.biddingDeadline),
+                tokenType: onChainExists ? chain.escrowToken : (rfq?.tokenType ?? chain.escrowToken),
+                pricingMode: onChainExists ? chain.pricingMode : (rfq?.pricingMode ?? chain.pricingMode),
+                paid: onChainExists ? chain.paid : Boolean(rfq?.paid),
+                winnerAccepted: onChainExists ? chain.winnerAccepted : Boolean(rfq?.winnerAccepted),
             };
         }),
     );

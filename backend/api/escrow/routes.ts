@@ -10,6 +10,7 @@ import type { AleoTransaction } from '../../lib/types';
 import {
     ACTION_TAG,
     deriveReceiptHash,
+    PRICING_MODE,
     PROGRAM_IDS,
     RFQ_STATUS,
     TIMING,
@@ -101,26 +102,46 @@ function creatorReclaimTransition(tokenType: number) {
 }
 
 async function loadEscrowState(rfqId: string) {
-    const [rfq, escrow, chain, platform, payments, currentBlock] = await Promise.all([
+    const [rfq, escrow, chain, platform, payments, currentBlock, winningBid] = await Promise.all([
         prisma.rFQ.findUnique({ where: { id: rfqId } }),
         prisma.escrow.findUnique({ where: { rfqId } }),
         getRfqChainState(rfqId),
         getPlatformConfig(),
         prisma.payment.findMany({ where: { rfqId }, orderBy: { releasedAt: 'asc' } }),
         getCurrentBlockHeight(),
+        prisma.bid.findFirst({
+            where: { rfqId, isWinner: true },
+            select: { vendor: true, revealedAmount: true, revealedBlock: true },
+        }),
     ]);
 
     const releasedAmount = payments.reduce((total, payment) => total + payment.amount, BigInt(0));
     const winningAmount = await getWinningAmountFromChain(rfqId);
+    const onChainExists = chain.statusCode !== 0;
+    const effectiveChain = {
+        ...chain,
+        status: onChainExists ? chain.status : (rfq?.status ?? chain.status),
+        creator: chain.creator ?? rfq?.buyer ?? null,
+        winner: chain.winner ?? winningBid?.vendor ?? null,
+        lifecycleBlock: onChainExists
+            ? chain.lifecycleBlock
+            : (escrow?.fundedBlock ?? winningBid?.revealedBlock ?? rfq?.createdBlock ?? null),
+        escrowToken: onChainExists ? chain.escrowToken : (rfq?.tokenType ?? TOKEN_TYPE.CREDITS),
+        pricingMode: onChainExists ? chain.pricingMode : (rfq?.pricingMode ?? PRICING_MODE.RFQ),
+        paid: onChainExists ? chain.paid : Boolean(rfq?.paid),
+        winnerAccepted: onChainExists ? chain.winnerAccepted : Boolean(rfq?.winnerAccepted),
+        auctionSource: onChainExists ? chain.auctionSource : (rfq?.auctionSource ?? null),
+        receiptHash: onChainExists ? chain.receiptHash : (rfq?.receiptHash ?? null),
+    };
 
     return {
         rfq,
         escrow,
-        chain,
+        chain: effectiveChain,
         platform,
         payments,
         releasedAmount,
-        winningAmount: winningAmount ? BigInt(winningAmount) : escrow?.totalAmount ?? BigInt(0),
+        winningAmount: winningAmount ? BigInt(winningAmount) : (winningBid?.revealedAmount ?? escrow?.totalAmount ?? BigInt(0)),
         currentBlock,
     };
 }
@@ -371,6 +392,10 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
             amount,
             data.receiptNonce,
         );
+        await prisma.rFQ.update({
+            where: { id: rfqId },
+            data: { paid: true, receiptHash },
+        });
         return NextResponse.json({
             status: 'success',
             data: {
