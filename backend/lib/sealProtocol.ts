@@ -15,7 +15,8 @@ type HashSdkModule = {
 };
 
 export const PROGRAM_IDS = {
-    rfq: process.env.ALEO_PROGRAM_ID || 'sealrfq_v17.aleo',
+    rfq: process.env.ALEO_PROGRAM_ID || 'sealrfq_v18.aleo',
+    invoice: process.env.ALEO_INVOICE_PROGRAM_ID || 'sealrfq_invoice_v1.aleo',
     credits: 'credits.aleo',
     usdcx: 'test_usdcx_stablecoin.aleo',
     usad: 'test_usad_stablecoin.aleo',
@@ -181,6 +182,10 @@ export async function deriveWinnerCertificateId(
     );
 }
 
+export async function deriveBidKey(rfqId: string, bidId: string): Promise<string> {
+    return bhpHashToFieldFromPlaintext(`{ rfq_id: ${rfqId}, bid_id: ${bidId} }`);
+}
+
 export async function deriveReceiptHash(
     rfqId: string,
     payer: string,
@@ -191,6 +196,18 @@ export async function deriveReceiptHash(
     return bhpHashToFieldFromPlaintext(
         `{ rfq_id: ${rfqId}, payer: ${payer}, winner: ${winner}, amount: ${amount}u64, nonce: ${nonce} }`,
     );
+}
+
+export async function getNextActionNonceFromChain(
+    actorAddress: string,
+    rfqId: string,
+    actionTag: number,
+): Promise<number> {
+    const nonceKey = await bhpHashToFieldFromPlaintext(
+        `{ actor: ${actorAddress}, action_tag: ${actionTag}u8, rfq_id: ${rfqId} }`,
+    );
+    const storedNonce = parseBigintString(await getProgramMappingValue('actor_nonces', nonceKey));
+    return Number(BigInt(storedNonce ?? '0') + 1n);
 }
 
 export function canonicalActionKey(
@@ -335,14 +352,12 @@ export async function getRfqChainState(rfqId: string): Promise<ChainRfqState> {
     ]);
 
     const statusCode = parseInteger(mapping.rfq_status) ?? 0;
-    const settlementProof = await getProgramMappingValue(
-        'v16_proofs',
-        sha256ToField([rfqId, 1]),
-    ).then(parseField);
-    const paymentProof = await getProgramMappingValue(
-        'v16_proofs',
-        sha256ToField([rfqId, 2]),
-    ).then(parseField);
+    const [settlementProofKey, paymentProofKey] = await Promise.all([
+        bhpHashToFieldFromPlaintext(`{ rfq_id: ${rfqId}, proof_tag: 1u8 }`),
+        bhpHashToFieldFromPlaintext(`{ rfq_id: ${rfqId}, proof_tag: 2u8 }`),
+    ]);
+    const settlementProof = await getProgramMappingValue('v16_proofs', settlementProofKey).then(parseField);
+    const paymentProof = await getProgramMappingValue('v16_proofs', paymentProofKey).then(parseField);
 
     return {
         status: STATUS_CODE_LABELS[statusCode] ?? 'NONE',
@@ -374,6 +389,11 @@ export async function getWinningAmountFromChain(rfqId: string): Promise<string |
     return parseBigintString(await getProgramMappingValue('revealed_bids', uniqueBidKey));
 }
 
+export async function getBidStakeFromChain(rfqId: string, bidId: string): Promise<string | null> {
+    const uniqueBidKey = await deriveBidKey(rfqId, bidId);
+    return parseBigintString(await getProgramMappingValue('bid_stakes', uniqueBidKey));
+}
+
 export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: string) {
     const program = kind === 'vickrey' ? PROGRAM_IDS.vickrey : PROGRAM_IDS.dutch;
     const rpcEntries =
@@ -386,6 +406,7 @@ export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: stri
                   ['auction_reveal_deadlines', auctionId],
                   ['auction_bid_count', auctionId],
                   ['auction_revealed_count', auctionId],
+                  ['auction_flat_stake', auctionId],
                   ['auction_lowest_bid', auctionId],
                   ['auction_second_lowest_bid', auctionId],
                   ['auction_final_winner', auctionId],
@@ -413,7 +434,6 @@ export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: stri
         acc[mapping] = values[index];
         return acc;
     }, {});
-
     return {
         auctionId,
         program,
@@ -421,8 +441,12 @@ export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: stri
         statusCode: parseInteger(mapped.auction_status) ?? 0,
         creator: parseAddress(mapped.auction_creators),
         rfqId: parseField(mapped.auction_rfq_id),
+        // Both current auction contracts (sealvickrey_v2, sealdutch_v4) only support ALEO credits.
+        tokenType: TOKEN_TYPE.CREDITS,
+        tokenSymbol: tokenSymbol(TOKEN_TYPE.CREDITS),
         bidCount: parseBigintString(mapped.auction_bid_count),
         revealedCount: parseBigintString(mapped.auction_revealed_count),
+        flatStake: parseBigintString(mapped.auction_flat_stake),
         biddingDeadline: parseInteger(mapped.auction_bidding_deadlines),
         revealDeadline: parseInteger(mapped.auction_reveal_deadlines),
         lowestBid: parseBigintString(mapped.auction_lowest_bid),

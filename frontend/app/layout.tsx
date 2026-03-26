@@ -1,13 +1,16 @@
 import './globals.css';
 import { WalletProvider } from '@/contexts/WalletContext';
+import { ProvableWalletProvider } from '@/contexts/ProvableWalletProvider';
 import { ToastProvider } from '@/components/Toast';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Plus_Jakarta_Sans } from 'next/font/google';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import WalletErrorModal from '@/components/WalletErrorModal';
+import AppRouteGuard from '@/components/AppRouteGuard';
+import AppBackdrop from '@/components/AppBackdrop';
 
-const inter = Inter({
+const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
   variable: '--font-body',
   display: 'swap',
@@ -25,17 +28,22 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans min-h-screen flex flex-col`}>
+      <body className={`${jakarta.variable} font-sans min-h-screen flex flex-col`}>
+        <ProvableWalletProvider>
         <WalletProvider>
           <ToastProvider>
             <Navbar />
             <WalletErrorModal />
-            <main className="flex-grow pt-16 relative z-10">
-              {children}
+            <main className="premium-app flex-grow pt-16 relative">
+              <AppBackdrop />
+              <div className="relative z-10">
+                <AppRouteGuard>{children}</AppRouteGuard>
+              </div>
             </main>
             <Footer />
           </ToastProvider>
         </WalletProvider>
+        </ProvableWalletProvider>
       </body>
     </html>
   );

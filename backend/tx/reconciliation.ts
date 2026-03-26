@@ -279,7 +279,7 @@ export class ReconciliationJob {
                         idempotencyKey: `phantom_${result.txHash}`,
                         canonicalTxKey: canonicalKey,
                         transition: canonicalKey.split(':')[0],
-                        programId: process.env.ALEO_PROGRAM_ID || 'sealrfq_v17.aleo',
+                        programId: process.env.ALEO_PROGRAM_ID || 'sealrfq_v18.aleo',
                         status: 'CONFIRMED',
                         txHash: result.txHash,
                         blockHeight: result.blockHeight ?? null,

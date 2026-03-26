@@ -49,7 +49,11 @@ export function useRoleGuard(allowedRoles: UserRole[]) {
 
                 // Check if user has required role
                 if (!allowedRoles.includes(userRole)) {
-                    router.push('/unauthorized');
+                    const attemptedPath =
+                        typeof window !== 'undefined'
+                            ? `${window.location.pathname}${window.location.search}`
+                            : '/dashboard';
+                    router.push(`/unauthorized?from=${encodeURIComponent(attemptedPath)}`);
                     return;
                 }
 

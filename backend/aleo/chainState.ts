@@ -10,7 +10,7 @@ import type { ChainState } from '../tx/reconciliation';
 
 const ENDPOINT  = process.env.ALEO_RPC_URL  || 'https://api.explorer.provable.com/v1';
 const NETWORK   = process.env.ALEO_NETWORK  || 'testnet';
-const PROGRAM   = process.env.ALEO_PROGRAM_ID || 'sealrfq_v17.aleo';
+const PROGRAM   = process.env.ALEO_PROGRAM_ID || 'sealrfq_v18.aleo';
 const TIMEOUT_MS = Number(process.env.ALEO_RPC_TIMEOUT_MS || '10000');
 
 async function rpcFetch(path: string): Promise<any | null> {

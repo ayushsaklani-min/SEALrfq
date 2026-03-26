@@ -1,10 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     InfoList,
@@ -13,9 +15,13 @@ import {
     PageHeader,
     PageShell,
     Panel,
+    TokenChip,
+    WorkflowGuide,
+    type WorkflowGuideStep,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
-import { PRICING_MODE } from '@/lib/sealProtocol';
+import { formatAmount, PRICING_MODE, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
+import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
 type DutchDetail = {
@@ -31,6 +37,8 @@ type DutchDetail = {
     endBlock?: number | null;
     finalWinner?: string | null;
     finalPrice?: string | null;
+    tokenType?: number | null;
+    tokenSymbol?: string | null;
 };
 
 export default function DutchDetailPage({ params }: { params: { auctionId: string } }) {
@@ -139,6 +147,7 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
         );
     }
 
+    const auctionTokenType = auction.tokenType ?? TOKEN_TYPE.CREDITS;
     const beforeStart =
         typeof auction.currentBlock === 'number' &&
         typeof auction.startBlock === 'number' &&
@@ -148,13 +157,60 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
         typeof auction.endBlock === 'number' &&
         auction.currentBlock > auction.endBlock;
     const accepted = Boolean(auction.finalWinner);
+    const linkedRfqHref = auction.rfqId ? `/buyer/rfqs/${encodeURIComponent(auction.rfqId)}` : null;
+    const workflowSteps: WorkflowGuideStep[] = [
+        {
+            title: 'Auction is created and linked',
+            description: 'This Dutch auction is now the live-price workspace for the linked RFQ.',
+            state: 'complete' as const,
+            action: linkedRfqHref ? (
+                <ActionBar>
+                    <Link href={linkedRfqHref}>
+                        <Button size="sm" variant="secondary">Open linked RFQ</Button>
+                    </Link>
+                </ActionBar>
+            ) : null,
+        },
+        {
+            title: 'Wait for start and watch the live price',
+            description: 'The descending price starts at the configured start block and keeps moving until accepted or expired.',
+            state: accepted ? 'complete' : beforeStart ? 'current' : ('complete' as const),
+        },
+        {
+            title: 'A vendor accepts the current price',
+            description: 'The first valid accept locks the final winner and price for this auction.',
+            state: accepted ? 'complete' : beforeStart || afterEnd ? ('upcoming' as const) : ('current' as const),
+        },
+        {
+            title: 'Import the finalized result into the RFQ',
+            description: 'Once a winner exists, return the final winner and price to the RFQ so the winner-response flow can continue.',
+            state: accepted ? 'current' : ('upcoming' as const),
+            action:
+                accepted && auction.rfqId ? (
+                    <ActionBar>
+                        <Button size="sm" onClick={importIntoRfq} isLoading={acting}>
+                            Import into RFQ
+                        </Button>
+                        <Link href={linkedRfqHref}>
+                            <Button size="sm" variant="secondary">Open RFQ</Button>
+                        </Link>
+                    </ActionBar>
+                ) : null,
+        },
+        {
+            title: 'Winner responds and buyer funds escrow in the RFQ',
+            description: 'After import, the winner still accepts inside the RFQ before the buyer funds escrow and continues settlement.',
+            state: 'upcoming' as const,
+        },
+    ];
 
     return (
         <PageShell className="space-y-6">
             <PageHeader
                 eyebrow="Auctions"
                 title={`Dutch ${params.auctionId}`}
-                description="Track the live price, take it in one transaction, then import the result into the linked RFQ."
+                description={`Track the live price, take it in one transaction, then import the result into the linked RFQ. Prices use ${tokenLabel(auctionTokenType)}. Commit stake remains ALEO credits.`}
+                actions={<TokenChip tokenType={auction.tokenType} label={auction.tokenSymbol || undefined} />}
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
@@ -174,16 +230,17 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
                 <div className="space-y-6">
                     <Panel title="Auction summary">
                         <DataGrid columns={2}>
-                            <DataPoint label="RFQ id" value={auction.rfqId || '--'} />
-                            <DataPoint label="Creator" value={auction.creator || '--'} />
+                            <DataPoint label="Auction id" value={<CopyableText value={params.auctionId} displayValue={truncateMiddle(params.auctionId, 16, 10)} />} />
+                            <DataPoint label="RFQ id" value={auction.rfqId ? <CopyableText value={auction.rfqId} displayValue={truncateMiddle(auction.rfqId, 16, 10)} /> : '--'} />
+                            <DataPoint label="Creator" value={auction.creator ? <CopyableText value={auction.creator} displayValue={truncateMiddle(auction.creator, 14, 10)} /> : '--'} />
                             <DataPoint label="Current block" value={auction.currentBlock ?? '--'} />
-                            <DataPoint label="Live price" value={auction.currentPrice || '--'} />
-                            <DataPoint label="Start price" value={auction.startPrice || '--'} />
-                            <DataPoint label="Floor price" value={auction.reservePrice || '--'} />
+                            <DataPoint label="Live price" value={formatAmount(auction.currentPrice, auctionTokenType)} />
+                            <DataPoint label="Start price" value={formatAmount(auction.startPrice, auctionTokenType)} />
+                            <DataPoint label="Floor price" value={formatAmount(auction.reservePrice, auctionTokenType)} />
                             <DataPoint label="Starts at" value={auction.startBlock ?? '--'} />
                             <DataPoint label="Ends at" value={auction.endBlock ?? '--'} />
                             <DataPoint label="Final winner" value={auction.finalWinner || '--'} />
-                            <DataPoint label="Final price" value={auction.finalPrice || '--'} />
+                            <DataPoint label="Final price" value={formatAmount(auction.finalPrice, auctionTokenType)} />
                         </DataGrid>
                     </Panel>
 
@@ -197,9 +254,14 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
                 </div>
 
                 <div className="space-y-6">
+                    <Panel title="Workflow guide" subtitle="This is the full handoff from Dutch pricing back into the linked RFQ.">
+                        <WorkflowGuide steps={workflowSteps} />
+                    </Panel>
+
                     <Panel title="Creator actions">
                         <InfoList>
-                            <InfoRow label="Linked RFQ" value={auction.rfqId || '--'} />
+                            <InfoRow label="Linked RFQ" value={auction.rfqId ? <CopyableText value={auction.rfqId} displayValue={truncateMiddle(auction.rfqId, 16, 10)} /> : '--'} />
+                            <InfoRow label="Settlement token" value={tokenLabel(auctionTokenType)} />
                             <InfoRow label="Ready to import" value={auction.rfqId && auction.finalWinner && auction.finalPrice ? 'Yes' : 'Not yet'} />
                             <InfoRow
                                 label="Next step"
@@ -218,11 +280,7 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
                             <Button variant="secondary" onClick={expireAuction} isLoading={acting}>
                                 Expire auction
                             </Button>
-                            <Button
-                                onClick={importIntoRfq}
-                                isLoading={acting}
-                                disabled={!auction.rfqId || !auction.finalWinner || !auction.finalPrice}
-                            >
+                            <Button onClick={importIntoRfq} isLoading={acting} disabled={!auction.rfqId || !auction.finalWinner || !auction.finalPrice}>
                                 Import into RFQ
                             </Button>
                         </ActionBar>

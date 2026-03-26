@@ -2,7 +2,7 @@
 export type AleoTransaction = {
     program: string;
     function: string;
-    inputs: string[];
+    inputs: unknown[];
     fee: bigint;
 };
 

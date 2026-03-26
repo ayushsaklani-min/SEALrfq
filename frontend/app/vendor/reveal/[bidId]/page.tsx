@@ -7,6 +7,7 @@ import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     Field,
@@ -25,6 +26,7 @@ import {
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { formatAmount, PRICING_MODE } from '@/lib/sealProtocol';
+import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
 type BidDetail = {
@@ -88,9 +90,13 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
                     setRfq(rfqPayload.data);
                     setCurrentBlock(blockHeight);
                     if (savedBundle) {
-                        const parsed = JSON.parse(savedBundle);
-                        setNonce(parsed.nonce || '');
-                        setAmountInput(fromMicroUnits(parsed.bidAmount));
+                        try {
+                            const parsed = JSON.parse(savedBundle);
+                            setNonce(parsed.nonce || '');
+                            setAmountInput(fromMicroUnits(parsed.bidAmount));
+                        } catch {
+                            // Ignore malformed local bundle and let the user enter values manually.
+                        }
                     }
                 }
             } catch (caught: any) {
@@ -226,7 +232,12 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
 
                     {txKey ? (
                         <Panel title="Latest transaction">
-                            <TxStatusView idempotencyKey={txKey} compact={true} />
+                            <div className="space-y-4">
+                                <TxStatusView idempotencyKey={txKey} compact={true} />
+                                <Link href="/vendor/my-bids" className="inline-flex text-sm font-medium text-[hsl(var(--primary))] hover:underline">
+                                    Return to my bids
+                                </Link>
+                            </div>
                         </Panel>
                     ) : null}
                 </div>
@@ -234,13 +245,16 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
                 <div className="space-y-6">
                     <Panel title="Bid summary">
                         <DataGrid columns={2}>
-                            <DataPoint label="Bid id" value={bid.id} />
-                            <DataPoint label="RFQ id" value={bid.rfqId} />
+                            <DataPoint label="Bid id" value={<CopyableText value={bid.id} displayValue={truncateMiddle(bid.id, 14, 8)} />} />
+                            <DataPoint label="RFQ id" value={<CopyableText value={bid.rfqId} displayValue={truncateMiddle(bid.rfqId, 16, 10)} />} />
                             <DataPoint label="Stake" value={formatAmount(bid.stake, 0)} />
-                            <DataPoint label="Vendor" value={bid.vendor} />
+                            <DataPoint label="Vendor" value={<CopyableText value={bid.vendor} displayValue={truncateMiddle(bid.vendor, 14, 10)} />} />
                         </DataGrid>
                         <InfoList className="mt-4">
-                            <InfoRow label="Commitment hash" value={<span className="break-all font-mono text-xs">{bid.commitmentHash}</span>} />
+                            <InfoRow
+                                label="Commitment hash"
+                                value={<CopyableText value={bid.commitmentHash} displayValue={truncateMiddle(bid.commitmentHash, 18, 12)} breakAll={true} />}
+                            />
                         </InfoList>
                     </Panel>
 

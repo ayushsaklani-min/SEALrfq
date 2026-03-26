@@ -284,6 +284,7 @@ async function main() {
     const createAuctionV = await api('POST', '/api/auction/vickrey', {
         salt: vickreySalt,
         rfqId: rfqIdV,
+        tokenType: 0,
         biddingDeadline: biddingDeadlineV,
         revealDeadline: revealDeadlineV,
         minBid: minBidV,
@@ -462,6 +463,7 @@ async function main() {
     const createAuctionD = await api('POST', '/api/auction/dutch', {
         salt: dutchSalt,
         rfqId: rfqIdD,
+        tokenType: 0,
         startPrice: startPriceD,
         reservePrice: reservePriceD,
         decrementPerBlock: decrementD,

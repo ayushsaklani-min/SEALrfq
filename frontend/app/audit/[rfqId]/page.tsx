@@ -1,7 +1,22 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import {
+    ActionBar,
+    CopyInlineButton,
+    CopyableText,
+    DataGrid,
+    DataPoint,
+    Field,
+    Notice,
+    PageHeader,
+    PageShell,
+    Panel,
+    SelectInput,
+} from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
+import { truncateMiddle } from '@/lib/utils';
 
 type AuditEvent = {
     id: string;
@@ -89,88 +104,119 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
         URL.revokeObjectURL(url);
     };
 
-    if (loading) return <div className="max-w-6xl mx-auto p-8 text-gray-400">Loading audit trail...</div>;
-    if (error) return <div className="max-w-6xl mx-auto p-8 text-red-400">Error: {error}</div>;
+    if (loading) {
+        return (
+            <PageShell>
+                <Panel title="Loading audit trail">
+                    <div className="text-sm text-white/55">Fetching indexed events and filters.</div>
+                </Panel>
+            </PageShell>
+        );
+    }
+
+    if (error) {
+        return (
+            <PageShell>
+                <Notice tone="danger">{error}</Notice>
+            </PageShell>
+        );
+    }
+
+    const latestBlock = events.reduce((max, event) => Math.max(max, event.blockHeight || 0), 0);
 
     return (
-        <div className="max-w-6xl mx-auto py-10 px-4">
-            <div className="flex items-center justify-between gap-4 mb-6">
-                <div>
-                    <h1 className="text-3xl font-bold">Audit Trail</h1>
-                    <p className="text-gray-400 text-sm">{rfqId ? `RFQ ${rfqId}` : 'All RFQs'}</p>
+        <PageShell className="space-y-6">
+            <PageHeader
+                eyebrow="Audit"
+                title="Audit trail"
+                description={rfqId ? `Indexed event history for RFQ ${rfqId}.` : 'Indexed event history for all RFQs.'}
+                actions={
+                    <ActionBar>
+                        {rfqId ? <CopyableText value={rfqId} displayValue={truncateMiddle(rfqId, 16, 10)} /> : null}
+                        <Button variant="secondary" onClick={exportCsv} disabled={events.length === 0}>
+                            Export CSV
+                        </Button>
+                    </ActionBar>
+                }
+            />
+
+            <DataGrid columns={3}>
+                <DataPoint label="Events" value={events.length} />
+                <DataPoint label="Event types" value={eventTypes.length - 1} />
+                <DataPoint label="Latest block" value={latestBlock || '--'} />
+            </DataGrid>
+
+            <Panel title="Filters" subtitle="Narrow the event table before exporting.">
+                <div className="grid gap-4 md:grid-cols-[minmax(0,240px)_1fr]">
+                    <Field label="Event type">
+                        <SelectInput value={filterEventType} onChange={(e) => setFilterEventType(e.target.value)}>
+                            {eventTypes.map((type) => (
+                                <option key={type} value={type}>
+                                    {type}
+                                </option>
+                            ))}
+                        </SelectInput>
+                    </Field>
+                    <Notice title="Scope">{rfqId ? 'Showing one RFQ audit trail.' : 'Showing all indexed audit events.'}</Notice>
                 </div>
-                <button
-                    onClick={exportCsv}
-                    className="px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700"
-                >
-                    Export CSV
-                </button>
-            </div>
+            </Panel>
 
-            <div className="glass p-4 rounded-2xl border border-white/10 mb-4 flex items-center gap-3">
-                <label className="text-sm text-gray-300">Event Type</label>
-                <select
-                    value={filterEventType}
-                    onChange={(e) => setFilterEventType(e.target.value)}
-                    className="bg-black/40 border border-white/10 rounded-lg px-3 py-2"
-                >
-                    {eventTypes.map((type) => (
-                        <option key={type} value={type}>
-                            {type}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            <div className="glass rounded-2xl border border-white/10 overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm">
-                    <thead className="bg-white/5">
-                        <tr className="text-left">
-                            <th className="p-3">Block</th>
-                            <th className="p-3">Processed</th>
-                            <th className="p-3">Event Type</th>
-                            <th className="p-3">Transition</th>
-                            <th className="p-3">Tx</th>
-                            <th className="p-3">Version</th>
-                            <th className="p-3">RFQ</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {events.length === 0 ? (
-                            <tr>
-                                <td colSpan={7} className="p-4 text-gray-400">
-                                    No events found.
-                                </td>
-                            </tr>
-                        ) : (
-                            events.map((event) => (
-                                <tr key={event.id} className="border-t border-white/5">
-                                    <td className="p-3">{event.blockHeight}</td>
-                                    <td className="p-3">{new Date(event.processedAt).toLocaleString()}</td>
-                                    <td className="p-3">{event.eventType}</td>
-                                    <td className="p-3">{event.transition || '-'}</td>
-                                    <td className="p-3">
-                                        {isExplorerTx(event.txId) ? (
-                                            <a
-                                                href={`https://explorer.aleo.org/transaction/${event.txId}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-primary-300 hover:text-primary-200"
-                                            >
-                                                {short(event.txId)}
-                                            </a>
-                                        ) : (
-                                            <span className="text-gray-300">{short(event.txId)}</span>
-                                        )}
-                                    </td>
-                                    <td className="p-3">{event.eventVersion}</td>
-                                    <td className="p-3">{short(event.rfqId, 18)}</td>
+            <Panel title="Events" subtitle="Every processed event is timestamped and exportable.">
+                {events.length === 0 ? (
+                    <div className="text-sm text-white/55">No events found for the current filter set.</div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="min-w-[980px] w-full text-sm">
+                            <thead className="bg-white/[0.04]">
+                                <tr className="text-left text-white/50">
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">Block</th>
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">Processed</th>
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">Event type</th>
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">Transition</th>
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">Tx</th>
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">Version</th>
+                                    <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em]">RFQ</th>
                                 </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+                            </thead>
+                            <tbody>
+                                {events.map((event) => (
+                                    <tr key={event.id} className="border-t border-white/[0.06] align-top transition hover:bg-white/[0.03]">
+                                        <td className="px-4 py-3 font-medium text-white">{event.blockHeight}</td>
+                                        <td className="px-4 py-3 text-white/55">{new Date(event.processedAt).toLocaleString()}</td>
+                                        <td className="px-4 py-3 font-medium text-white">{event.eventType}</td>
+                                        <td className="px-4 py-3 text-white/60">{event.transition || '-'}</td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center gap-2">
+                                                {isExplorerTx(event.txId) ? (
+                                                    <a
+                                                        href={`https://explorer.aleo.org/transaction/${event.txId}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="font-mono text-[13px] text-emerald-300 hover:underline"
+                                                    >
+                                                        {short(event.txId, 18)}
+                                                    </a>
+                                                ) : (
+                                                    <span className="font-mono text-[13px] text-white/60">{short(event.txId, 18)}</span>
+                                                )}
+                                                <CopyInlineButton value={event.txId} />
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-white/55">{event.eventVersion}</td>
+                                        <td className="px-4 py-3">
+                                            {event.rfqId ? (
+                                                <CopyableText value={event.rfqId} displayValue={short(event.rfqId, 18)} />
+                                            ) : (
+                                                <span className="text-white/30">-</span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Panel>
+        </PageShell>
     );
 }

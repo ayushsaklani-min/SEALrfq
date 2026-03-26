@@ -7,6 +7,7 @@ import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     Field,
@@ -24,6 +25,7 @@ import {
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { formatAmount, pricingLabel, PRICING_MODE, randomField, TIMING } from '@/lib/sealProtocol';
+import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
 type RfqDetail = {
@@ -42,6 +44,13 @@ type RfqDetail = {
     buyer: string;
 };
 
+type ExistingBid = {
+    id: string;
+    rfqId: string;
+    isRevealed: boolean;
+    revealedAmount?: string | null;
+};
+
 function toMicroUnits(value: string): string | null {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric <= 0) return null;
@@ -50,6 +59,7 @@ function toMicroUnits(value: string): string | null {
 
 export default function VendorBidPage({ params }: { params: { rfqId: string } }) {
     const [rfq, setRfq] = useState<RfqDetail | null>(null);
+    const [existingBid, setExistingBid] = useState<ExistingBid | null>(null);
     const [currentBlock, setCurrentBlock] = useState<number | null>(null);
     const [bidAmount, setBidAmount] = useState('');
     const [nonceBundle, setNonceBundle] = useState<{ bidId: string; nonce: string; bidAmount: string } | null>(null);
@@ -71,9 +81,32 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                 if (!rfqResponse.ok) {
                     throw new Error(payload?.error?.message || 'Failed to load RFQ.');
                 }
+                const bidsResponse = await authenticatedFetch('/api/bid/my-bids');
+                const bidsPayload = await bidsResponse.json().catch(() => ({ data: [] }));
+                if (!bidsResponse.ok) {
+                    throw new Error(bidsPayload?.error?.message || 'Failed to load vendor bids.');
+                }
+                const matchedBid =
+                    (bidsPayload.data || []).find((bid: ExistingBid) => bid.rfqId === params.rfqId) || null;
                 if (!cancelled) {
                     setRfq(payload.data);
+                    setExistingBid(matchedBid);
                     setCurrentBlock(blockHeight);
+                    if (matchedBid?.id) {
+                        const savedBundle = localStorage.getItem(`bid_nonce_${matchedBid.id}`);
+                        if (savedBundle) {
+                            try {
+                                const parsed = JSON.parse(savedBundle);
+                                setNonceBundle({
+                                    bidId: parsed.bidId || matchedBid.id,
+                                    nonce: parsed.nonce || '',
+                                    bidAmount: parsed.bidAmount || '',
+                                });
+                            } catch {
+                                // Ignore malformed local bundle.
+                            }
+                        }
+                    }
                 }
             } catch (caught: any) {
                 if (!cancelled) setError(caught?.message || 'Failed to load RFQ.');
@@ -99,6 +132,7 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
         try {
             if (rfq.status !== 'OPEN') throw new Error(`RFQ is ${rfq.status}.`);
             if (rfq.pricingMode !== PRICING_MODE.RFQ) throw new Error(`This RFQ uses ${pricingLabel(rfq.pricingMode)} pricing. Bid in the auction workspace instead.`);
+            if (existingBid) throw new Error('You already committed a bid on this RFQ. Use the reveal flow instead of committing again.');
 
             const bidAmountMicro = toMicroUnits(bidAmount);
             if (!bidAmountMicro) throw new Error('Enter a valid bid amount.');
@@ -183,6 +217,8 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
         );
     }
 
+    const biddingOpen = currentBlock !== null && currentBlock < rfq.biddingDeadline;
+    const revealOpen = currentBlock !== null && currentBlock >= rfq.biddingDeadline && currentBlock < rfq.revealDeadline;
     const urgentWindow = currentBlock !== null && rfq.biddingDeadline - currentBlock <= TIMING.SNIPE_WINDOW_BLOCKS;
 
     return (
@@ -212,19 +248,35 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                 </Notice>
             ) : null}
 
+            {existingBid && !existingBid.isRevealed && revealOpen ? (
+                <Notice title="Reveal is open">
+                    Bidding is closed for this RFQ. Your committed bid can be revealed now.
+                </Notice>
+            ) : null}
+
+            {existingBid && !existingBid.isRevealed && biddingOpen ? (
+                <Notice title="Bid already committed">
+                    You already committed a bid on this RFQ. Reveal opens once the bidding deadline passes.
+                </Notice>
+            ) : null}
+
             {error ? <Notice tone="danger">{error}</Notice> : null}
 
             <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
                 <div className="space-y-6">
                     <Panel title="RFQ summary">
                         <DataGrid columns={2}>
+                            <DataPoint label="RFQ id" value={<CopyableText value={rfq.id} displayValue={truncateMiddle(rfq.id, 16, 10)} />} />
                             <DataPoint label="Minimum bid" value={formatAmount(rfq.minBid, rfq.tokenType)} />
                             <DataPoint label="Required stake" value={formatAmount(rfq.flatStake || '0', 0)} />
-                            <DataPoint label="Buyer" value={rfq.buyer} />
+                            <DataPoint
+                                label="Buyer"
+                                value={<CopyableText value={rfq.buyer} displayValue={truncateMiddle(rfq.buyer, 14, 10)} />}
+                            />
                             <DataPoint label="Quantity" value={rfq.quantity ? `${rfq.quantity} ${rfq.unit || ''}`.trim() : '--'} />
                         </DataGrid>
                         {rfq.description ? (
-                            <p className="mt-4 text-sm leading-6 text-[hsl(var(--muted-foreground))]">{rfq.description}</p>
+                            <p className="mt-4 text-sm leading-6 text-white/60">{rfq.description}</p>
                         ) : null}
                     </Panel>
 
@@ -234,9 +286,14 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                                 <Field label="Your sealed price" hint={`Must be at least ${formatAmount(rfq.minBid, rfq.tokenType)}.`}>
                                     <TextInput type="number" min="0.000001" step="0.000001" value={bidAmount} onChange={(event) => setBidAmount(event.target.value)} placeholder="125" />
                                 </Field>
-                                <Button type="submit" isLoading={submitting} disabled={rfq.status !== 'OPEN'}>
+                                <Button type="submit" isLoading={submitting} disabled={rfq.status !== 'OPEN' || !biddingOpen || Boolean(existingBid)}>
                                     Commit bid
                                 </Button>
+                                {existingBid && !existingBid.isRevealed && revealOpen ? (
+                                    <Link href={`/vendor/reveal/${encodeURIComponent(existingBid.id)}`}>
+                                        <Button size="sm" variant="secondary" type="button">Open reveal</Button>
+                                    </Link>
+                                ) : null}
                             </form>
                         ) : (
                             <div className="text-sm text-[hsl(var(--muted-foreground))]">Direct bid commit is disabled on imported auction modes.</div>
@@ -250,8 +307,15 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                             <DeadlineCountdown deadlineBlock={rfq.biddingDeadline} label="Bid window" passedLabel="Bidding closed" />
                             <DeadlineCountdown deadlineBlock={rfq.revealDeadline} label="Reveal window" passedLabel="Reveal closed" />
                         </div>
+                            <div className="mt-4 text-sm text-white/55">
+                            {biddingOpen
+                                ? 'Reveal is not open yet. It starts automatically after bidding closes.'
+                                : revealOpen
+                                  ? 'Reveal is open now for vendors who already committed a bid.'
+                                  : 'The reveal deadline has passed.'}
+                        </div>
                         {urgentWindow ? (
-                            <div className="mt-4 text-sm text-amber-200">
+                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-800">
                                 This RFQ is inside the anti-sniping window. A late bid may extend both deadlines.
                             </div>
                         ) : null}
@@ -260,9 +324,9 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                     {nonceBundle ? (
                         <Panel title="Saved for reveal">
                             <InfoList>
-                                <InfoRow label="Bid id" value={nonceBundle.bidId} />
+                                <InfoRow label="Bid id" value={<CopyableText value={nonceBundle.bidId} displayValue={truncateMiddle(nonceBundle.bidId, 14, 8)} />} />
                                 <InfoRow label="Committed price" value={formatAmount(nonceBundle.bidAmount, rfq.tokenType)} />
-                                <InfoRow label="Nonce" value={<span className="break-all">{nonceBundle.nonce}</span>} />
+                                <InfoRow label="Nonce" value={<CopyableText value={nonceBundle.nonce} displayValue={truncateMiddle(nonceBundle.nonce, 18, 10)} breakAll={true} />} />
                             </InfoList>
                             <ActionBar className="mt-4">
                                 <Button size="sm" variant="secondary" onClick={() => navigator.clipboard.writeText(nonceBundle.nonce)}>

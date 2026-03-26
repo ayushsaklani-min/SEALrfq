@@ -6,6 +6,7 @@ import {
     createTransitionInputs,
     getCurrentBlockHeight,
     getPlatformConfig,
+    getRfqChainState,
     prepareTrackedTransition,
     prisma,
     RFQ_STATUS,
@@ -173,6 +174,18 @@ export async function handleGetBids(request: NextRequest, rfqId: string) {
     const auth = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
     if (auth instanceof NextResponse) return auth;
 
+    const [rfq, chain] = await Promise.all([
+        prisma.rFQ.findUnique({ where: { id: rfqId } }),
+        getRfqChainState(rfqId),
+    ]);
+    if (!rfq) {
+        return NextResponse.json(
+            { status: 'error', error: { code: 'NOT_FOUND', message: 'RFQ not found' } },
+            { status: 404 },
+        );
+    }
+    const onChainExists = chain.statusCode !== 0;
+
     const bids = await prisma.bid.findMany({
         where: { rfqId },
         orderBy: [{ isWinner: 'desc' }, { revealedAmount: 'asc' }],
@@ -180,7 +193,10 @@ export async function handleGetBids(request: NextRequest, rfqId: string) {
 
     return NextResponse.json({
         status: 'success',
-        data: bids.map(serializeBid),
+        data: bids.map((bid) => ({
+            ...serializeBid(bid),
+            isWinner: onChainExists ? chain.winner === bid.vendor : bid.isWinner,
+        })),
     });
 }
 
@@ -203,6 +219,7 @@ export async function handleListOpenRFQs(request: NextRequest) {
     const auth = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
     if (auth instanceof NextResponse) return auth;
 
+    const currentBlock = await getCurrentBlockHeight();
     const rfqs = await prisma.rFQ.findMany({
         where: { status: { in: [RFQ_STATUS.OPEN, RFQ_STATUS.REVEAL] } },
         orderBy: { createdAt: 'desc' },
@@ -211,6 +228,6 @@ export async function handleListOpenRFQs(request: NextRequest) {
     const enriched = await Promise.all(rfqs.map((rfq) => augmentRFQ(rfq)));
     return NextResponse.json({
         status: 'success',
-        data: enriched.filter((rfq) => rfq.status === RFQ_STATUS.OPEN || rfq.status === RFQ_STATUS.REVEAL),
+        data: enriched.filter((rfq) => currentBlock < rfq.biddingDeadline),
     });
 }

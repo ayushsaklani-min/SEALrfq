@@ -14,7 +14,10 @@ import {
     TOKEN_TYPE,
     canonicalActionKey,
     deriveRfqId,
+    getAuctionState,
+    getBidStakeFromChain,
     deriveWinnerCertificateId,
+    getNextActionNonceFromChain,
     getPlatformConfig,
     getRfqChainState,
     parseBigintString,
@@ -88,15 +91,7 @@ export async function prepareTrackedTransition(tx: AleoTransaction, idempotencyK
 }
 
 export async function nextActionNonce(walletAddress: string, rfqId: string, actionTag: number) {
-    const confirmed = await prisma.transaction.count({
-        where: {
-            status: 'CONFIRMED',
-            canonicalTxKey: {
-                startsWith: `nonce:${actionTag}:${walletAddress}:${rfqId}`,
-            },
-        },
-    });
-    return confirmed + 1;
+    return getNextActionNonceFromChain(walletAddress, rfqId, actionTag);
 }
 
 export async function getWinningAmountFromChain(rfqId: string): Promise<string | null> {
@@ -250,4 +245,4 @@ export async function winnerCertificate(rfqId: string, winningBidId: string, win
     };
 }
 
-export { canonicalActionKey, estimateFee, getCurrentBlockHeight, getPlatformConfig, getRfqChainState, PRICING_MODE, PROGRAM_IDS, randomField, RFQ_STATUS, TIMING, TOKEN_TYPE };
+export { canonicalActionKey, estimateFee, getAuctionState, getBidStakeFromChain, getCurrentBlockHeight, getPlatformConfig, getRfqChainState, PRICING_MODE, PROGRAM_IDS, randomField, RFQ_STATUS, TIMING, TOKEN_TYPE };

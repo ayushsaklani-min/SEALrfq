@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     EmptyState,
@@ -16,10 +18,13 @@ import {
     PricingChip,
     SelectInput,
     StatusChip,
+    TextInput,
     TokenChip,
 } from '@/components/protocol/ProtocolPrimitives';
+import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { formatAmount, pricingLabel, tokenLabel } from '@/lib/sealProtocol';
+import { truncateMiddle } from '@/lib/utils';
 
 type RfqListItem = {
     id: string;
@@ -49,14 +54,19 @@ function nextActionLabel(rfq: RfqListItem) {
 }
 
 export default function BuyerRfqsPage() {
+    const router = useRouter();
+    const { role } = useWallet();
+    const isVendor = role === 'VENDOR';
+    const [lookupId, setLookupId] = useState('');
     const [rfqs, setRfqs] = useState<RfqListItem[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!isVendor);
     const [error, setError] = useState<string | null>(null);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [tokenFilter, setTokenFilter] = useState('ALL');
     const [pricingFilter, setPricingFilter] = useState('ALL');
 
     useEffect(() => {
+        if (isVendor) return; // Vendors don't have their own RFQs — skip the buyer-only endpoint.
         let cancelled = false;
         const load = async () => {
             try {
@@ -77,7 +87,7 @@ export default function BuyerRfqsPage() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [isVendor]);
 
     const filtered = useMemo(
         () =>
@@ -113,15 +123,36 @@ export default function BuyerRfqsPage() {
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
+            {isVendor ? (
+                <Notice tone="neutral" title="Viewing as Seller">
+                    You are currently in Seller mode. Use the lookup below to open any RFQ by ID, or go to your <a href="/vendor/my-bids" className="underline">Vendor dashboard</a> to browse open RFQs and place bids.
+                </Notice>
+            ) : null}
 
-            <DataGrid columns={3}>
+            <Panel title="Open RFQ by ID" subtitle="Access any RFQ directly — useful when switching wallets or sharing a link.">
+                <div className="flex gap-3">
+                    <div className="flex-1">
+                        <TextInput
+                            value={lookupId}
+                            onChange={(e) => setLookupId(e.target.value)}
+                            placeholder="Paste RFQ id..."
+                            onKeyDown={(e) => { if (e.key === 'Enter' && lookupId.trim()) router.push(`/buyer/rfqs/${encodeURIComponent(lookupId.trim())}`); }}
+                        />
+                    </div>
+                    <Button disabled={!lookupId.trim()} onClick={() => router.push(`/buyer/rfqs/${encodeURIComponent(lookupId.trim())}`)}>
+                        Open
+                    </Button>
+                </div>
+            </Panel>
+
+            {!isVendor && <DataGrid columns={3}>
                 <DataPoint label="Total RFQs" value={rfqs.length} />
                 <DataPoint label="Open for bids" value={openCount} />
                 <DataPoint label="Need auction import" value={importCount} subtle="Vickrey or Dutch RFQs still waiting for a result" />
                 <DataPoint label="In settlement" value={settlementCount} />
-            </DataGrid>
+            </DataGrid>}
 
-            <Panel title="Filters">
+            {!isVendor && <Panel title="Filters">
                 <div className="grid gap-4 md:grid-cols-3">
                     <Field label="Status">
                         <SelectInput value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -152,12 +183,21 @@ export default function BuyerRfqsPage() {
                         </SelectInput>
                     </Field>
                 </div>
-            </Panel>
+            </Panel>}
 
-            {loading ? (
-                <Panel title="Loading">
-                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Fetching RFQs.</div>
-                </Panel>
+            {!isVendor && (loading ? (
+                <div className="space-y-4">
+                    {[1, 2, 3].map((i) => (
+                        <div key={i} className="rounded-2xl border border-white/12 bg-white/[0.04] p-5 space-y-3">
+                            <div className="skeleton h-5 w-1/4 rounded-lg" />
+                            <div className="skeleton h-6 w-1/3 rounded-lg" />
+                            <div className="skeleton h-4 w-2/3 rounded-lg" />
+                            <div className="grid gap-3 md:grid-cols-4 mt-4">
+                                {[1,2,3,4].map((j) => <div key={j} className="skeleton h-16 rounded-xl" />)}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             ) : filtered.length === 0 ? (
                 <EmptyState
                     title="No RFQs match these filters"
@@ -171,7 +211,7 @@ export default function BuyerRfqsPage() {
                         <Link
                             key={rfq.id}
                             href={`/buyer/rfqs/${encodeURIComponent(rfq.id)}`}
-                            className="block rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 transition hover:border-[hsl(var(--primary)/0.3)] hover:bg-[hsl(var(--primary)/0.04)]"
+                            className="group block rounded-2xl border border-white/12 bg-white/[0.04] p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-amber-200/30 hover:bg-white/[0.07] hover:shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
                         >
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0">
@@ -180,18 +220,23 @@ export default function BuyerRfqsPage() {
                                         <TokenChip tokenType={rfq.tokenType} />
                                         <PricingChip pricingMode={rfq.pricingMode} />
                                     </div>
-                                    <div className="mt-3 text-lg font-semibold text-white">{rfq.itemName || 'Untitled RFQ'}</div>
-                                    <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{rfq.id}</div>
+                                    <div className="mt-3 text-lg font-semibold text-white group-hover:text-amber-50 transition-colors">{rfq.itemName || 'Untitled RFQ'}</div>
+                                    <div className="mt-2 max-w-fit">
+                                        <CopyableText value={rfq.id} displayValue={truncateMiddle(rfq.id, 16, 10)} />
+                                    </div>
                                     {rfq.description ? (
-                                        <p className="mt-3 max-w-3xl text-sm leading-6 text-[hsl(var(--muted-foreground))]">
+                                        <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
                                             {rfq.description}
                                         </p>
                                     ) : null}
                                 </div>
-                                <div className="text-sm text-[hsl(var(--muted-foreground))] lg:text-right">
-                                    <div className="font-medium text-white">{nextActionLabel(rfq)}</div>
-                                    <div className="mt-1">Bid close: block {rfq.biddingDeadline}</div>
-                                    <div>Reveal close: block {rfq.revealDeadline}</div>
+                                <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] px-4 py-3 lg:min-w-[220px]">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-200/70">Next action</div>
+                                    <div className="mt-1.5 text-sm font-semibold text-amber-100">{nextActionLabel(rfq)}</div>
+                                    <div className="mt-3 space-y-1 text-xs text-white/55">
+                                        <div>Bid close: <span className="text-white/80 font-medium">block {rfq.biddingDeadline}</span></div>
+                                        <div>Reveal close: <span className="text-white/80 font-medium">block {rfq.revealDeadline}</span></div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -204,7 +249,7 @@ export default function BuyerRfqsPage() {
                         </Link>
                     ))}
                 </div>
-            )}
+            ))}
         </PageShell>
     );
 }

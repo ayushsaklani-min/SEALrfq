@@ -7,6 +7,7 @@ import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     EmptyState,
@@ -22,6 +23,7 @@ import {
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { formatAmount, PRICING_MODE, TIMING } from '@/lib/sealProtocol';
+import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
 
@@ -52,6 +54,26 @@ type OpenRfq = {
     biddingDeadline: number;
 };
 
+function biddingOpen(deadline: number | null | undefined, currentBlock: number | null) {
+    return currentBlock !== null && deadline !== null && deadline !== undefined && currentBlock < deadline;
+}
+
+function revealOpen(
+    biddingDeadline: number | null | undefined,
+    revealDeadline: number | null | undefined,
+    currentBlock: number | null,
+) {
+    return (
+        currentBlock !== null &&
+        biddingDeadline !== null &&
+        biddingDeadline !== undefined &&
+        revealDeadline !== null &&
+        revealDeadline !== undefined &&
+        currentBlock >= biddingDeadline &&
+        currentBlock < revealDeadline
+    );
+}
+
 function canClaimStake(bid: VendorBid, currentBlock: number | null) {
     if (bid.isRefunded) return false;
     if (bid.rfqStatus === 'CANCELLED') return true;
@@ -66,10 +88,8 @@ function canClaimStake(bid: VendorBid, currentBlock: number | null) {
 }
 
 export default function VendorMyBidsPage() {
-    const protocolState = useProtocolStore((state) => ({
-        records: state.records,
-        winnerCertificate: state.winnerCertificate,
-    }));
+    const records = useProtocolStore((state) => state.records);
+    const winnerCertificate = useProtocolStore((state) => state.winnerCertificate);
     const [bids, setBids] = useState<VendorBid[]>([]);
     const [openRfqs, setOpenRfqs] = useState<OpenRfq[]>([]);
     const [currentBlock, setCurrentBlock] = useState<number | null>(null);
@@ -96,7 +116,7 @@ export default function VendorMyBidsPage() {
                 }
                 if (!cancelled) {
                     setBids(bidsPayload.data || []);
-                    setOpenRfqs((openRfqsPayload.data || []).filter((rfq: OpenRfq) => rfq.status === 'OPEN'));
+                    setOpenRfqs((openRfqsPayload.data || []).filter((rfq: OpenRfq) => biddingOpen(rfq.biddingDeadline, blockHeight)));
                     setCurrentBlock(blockHeight);
                 }
             } catch (caught: any) {
@@ -150,8 +170,8 @@ export default function VendorMyBidsPage() {
 
     const proveWin = (bid: VendorBid) => {
         const localCertificate =
-            protocolState.records.find((record) => record.type === 'WinnerCertificate' && record.rfqId === bid.rfqId) ||
-            (protocolState.winnerCertificate as { rfqId?: string } | null);
+            records.find((record) => record.type === 'WinnerCertificate' && record.rfqId === bid.rfqId) ||
+            (winnerCertificate as { rfqId?: string } | null);
 
         if (localCertificate && 'rfqId' in localCertificate && localCertificate.rfqId === bid.rfqId) {
             setProofMessage(`Local proof check succeeded for RFQ ${bid.rfqId}.`);
@@ -162,7 +182,10 @@ export default function VendorMyBidsPage() {
     };
 
     const wonCount = useMemo(() => bids.filter((bid) => bid.isWinner).length, [bids]);
-    const revealCount = useMemo(() => bids.filter((bid) => !bid.isRevealed).length, [bids]);
+    const revealCount = useMemo(
+        () => bids.filter((bid) => !bid.isRevealed && revealOpen(bid.biddingDeadline, bid.revealDeadline, currentBlock)).length,
+        [bids, currentBlock],
+    );
     const refundCount = useMemo(() => bids.filter((bid) => canClaimStake(bid, currentBlock)).length, [bids, currentBlock]);
 
     if (loading) {
@@ -201,7 +224,7 @@ export default function VendorMyBidsPage() {
                         ) : (
                             <div className="space-y-3">
                                 {openRfqs.map((rfq) => (
-                                    <div key={rfq.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
+                                    <div key={rfq.id} className="rounded-xl border border-white/12 bg-white/[0.05] p-4 transition hover:border-white/20 hover:bg-white/[0.07]">
                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div>
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -210,7 +233,10 @@ export default function VendorMyBidsPage() {
                                                     <PricingChip pricingMode={rfq.pricingMode} />
                                                 </div>
                                                 <div className="mt-3 text-base font-semibold text-white">{rfq.itemName || 'Untitled RFQ'}</div>
-                                                <div className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">{formatAmount(rfq.minBid, rfq.tokenType)} minimum</div>
+                                                <div className="mt-2 max-w-fit">
+                                                    <CopyableText value={rfq.id} displayValue={truncateMiddle(rfq.id, 16, 10)} />
+                                                </div>
+                                                <div className="mt-2 text-sm text-white/60">{formatAmount(rfq.minBid, rfq.tokenType)} minimum</div>
                                             </div>
                                             <ActionBar>
                                                 {rfq.pricingMode === PRICING_MODE.RFQ ? (
@@ -244,7 +270,7 @@ export default function VendorMyBidsPage() {
                         ) : (
                             <div className="space-y-3">
                                 {bids.map((bid) => (
-                                    <div key={bid.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
+                                    <div key={bid.id} className="rounded-xl border border-white/12 bg-white/[0.05] p-4 transition hover:border-white/20 hover:bg-white/[0.07]">
                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div>
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -252,24 +278,40 @@ export default function VendorMyBidsPage() {
                                                     <TokenChip tokenType={bid.tokenType ?? 0} />
                                                     <PricingChip pricingMode={bid.pricingMode ?? 0} />
                                                 </div>
-                                                <div className="mt-3 text-base font-semibold text-white">{bid.rfqId}</div>
-                                                <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{bid.id}</div>
+                                                <div className="mt-3 max-w-fit">
+                                                    <CopyableText value={bid.rfqId} displayValue={truncateMiddle(bid.rfqId, 16, 10)} className="text-sm font-semibold" />
+                                                </div>
+                                                <div className="mt-2 max-w-fit">
+                                                    <CopyableText value={bid.id} displayValue={truncateMiddle(bid.id, 14, 8)} />
+                                                </div>
                                             </div>
-                                            <div className="text-sm text-[hsl(var(--muted-foreground))] lg:text-right">
-                                                <div>Stake: {formatAmount(bid.stake, 0)}</div>
-                                                <div>{bid.revealedAmount ? `Bid: ${formatAmount(bid.revealedAmount, bid.tokenType ?? 0)}` : bid.isRevealed ? 'Revealed' : 'Not revealed yet'}</div>
-                                                {bid.isWinner ? <div className="font-medium text-emerald-300">Winner</div> : null}
+                                            <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] px-4 py-3 text-sm lg:min-w-[220px]">
+                                                <div className="text-white/70">Stake: <span className="font-medium text-white">{formatAmount(bid.stake, 0)}</span></div>
+                                                <div className="mt-1 text-white/70">{bid.revealedAmount ? `Bid: ${formatAmount(bid.revealedAmount, bid.tokenType ?? 0)}` : bid.isRevealed ? 'Revealed' : 'Not revealed yet'}</div>
+                                                {bid.isWinner ? <div className="mt-1.5 font-semibold text-emerald-300">Winner</div> : null}
                                             </div>
                                         </div>
 
-                                        {!bid.isRevealed && bid.revealDeadline ? (
+                                        {!bid.isRevealed && biddingOpen(bid.biddingDeadline, currentBlock) ? (
+                                            <div className="mt-3">
+                                                <DeadlineCountdown deadlineBlock={bid.biddingDeadline!} label="Bidding deadline" passedLabel="Bidding closed" />
+                                            </div>
+                                        ) : null}
+
+                                        {!bid.isRevealed && revealOpen(bid.biddingDeadline, bid.revealDeadline, currentBlock) ? (
                                             <div className="mt-3">
                                                 <DeadlineCountdown deadlineBlock={bid.revealDeadline} label="Reveal deadline" passedLabel="Reveal closed" />
                                             </div>
                                         ) : null}
 
+                                        {!bid.isRevealed && biddingOpen(bid.biddingDeadline, currentBlock) ? (
+                                            <div className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">
+                                                Reveal opens after bidding closes. The contract stays `OPEN` until the first reveal lands.
+                                            </div>
+                                        ) : null}
+
                                         <ActionBar className="mt-3">
-                                            {!bid.isRevealed && bid.pricingMode === PRICING_MODE.RFQ ? (
+                                            {!bid.isRevealed && bid.pricingMode === PRICING_MODE.RFQ && revealOpen(bid.biddingDeadline, bid.revealDeadline, currentBlock) ? (
                                                 <Link href={`/vendor/reveal/${encodeURIComponent(bid.id)}`}>
                                                     <Button size="sm" variant="secondary">Reveal</Button>
                                                 </Link>
@@ -319,7 +361,7 @@ export default function VendorMyBidsPage() {
                 <div className="space-y-6">
                     <Panel title="Saved records">
                         <RecordsPanel
-                            records={protocolState.records.map((record) => ({
+                            records={records.map((record) => ({
                                 id: record.id,
                                 type: record.type,
                                 rfqId: record.rfqId,
@@ -332,7 +374,7 @@ export default function VendorMyBidsPage() {
                         <div className="space-y-2 text-sm text-[hsl(var(--muted-foreground))]">
                             <div>Reveal starts automatically after bidding closes.</div>
                             <div>`winner_respond` returns the winner stake immediately on acceptance.</div>
-                            <div>`refund_any_stake` is surfaced here as a single “Claim stake” action.</div>
+                            <div>`refund_any_stake` is surfaced here as a single "Claim stake" action.</div>
                         </div>
                     </Panel>
                 </div>

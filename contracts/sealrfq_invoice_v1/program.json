@@ -1,0 +1,28 @@
+{
+    "program": "sealrfq_invoice_v1.aleo",
+    "version": "1.0.0",
+    "description": "SealRFQ invoice router - private stablecoin invoice settlement for sealrfq_v18",
+    "license": "MIT",
+    "leo": "3.5.0",
+    "dependencies": [
+        {
+            "name": "sealrfq_v18.aleo",
+            "location": "local",
+            "path": "../v18",
+            "edition": null
+        },
+        {
+            "name": "test_usdcx_stablecoin.aleo",
+            "location": "network",
+            "path": null,
+            "edition": null
+        },
+        {
+            "name": "test_usad_stablecoin.aleo",
+            "location": "network",
+            "path": null,
+            "edition": null
+        }
+    ],
+    "dev_dependencies": null
+}

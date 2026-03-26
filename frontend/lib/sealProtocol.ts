@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 export const PROGRAM_IDS = {
-    rfq: process.env.NEXT_PUBLIC_ALEO_PROGRAM_ID || 'sealrfq_v17.aleo',
+    rfq: process.env.NEXT_PUBLIC_ALEO_PROGRAM_ID || 'sealrfq_v18.aleo',
+    invoice: process.env.NEXT_PUBLIC_ALEO_INVOICE_PROGRAM_ID || 'sealrfq_invoice_v1.aleo',
     vickrey: process.env.NEXT_PUBLIC_ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v2.aleo',
     dutch: process.env.NEXT_PUBLIC_ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v4.aleo',
     credits: 'credits.aleo',
@@ -103,15 +104,15 @@ export const partialReleaseSchema = z.object({
 export const invoiceSchema = z.object({
     amount: z.string().regex(/^\d+$/),
     receiptNonce: z.string().regex(/^\d+field$/),
-    paymentRecord: z.string().min(1),
-    proofA: z.string().optional(),
-    proofB: z.string().optional(),
+    paymentRecord: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
+    proofs: z.string().optional(),
 });
 
 export const vickreyAuctionSchema = z.object({
     auctionId: z.string().regex(/^\d+field$/),
     salt: z.string().regex(/^\d+field$/),
     rfqId: z.string().regex(/^\d+field$/),
+    tokenType: z.number().int().min(0).max(2),
     biddingDeadline: z.number().int().positive(),
     revealDeadline: z.number().int().positive(),
     minBid: z.string().regex(/^\d+$/),
@@ -121,6 +122,7 @@ export const dutchAuctionSchema = z.object({
     auctionId: z.string().regex(/^\d+field$/),
     salt: z.string().regex(/^\d+field$/),
     rfqId: z.string().regex(/^\d+field$/),
+    tokenType: z.number().int().min(0).max(2),
     startPrice: z.string().regex(/^\d+$/),
     reservePrice: z.string().regex(/^\d+$/),
     decrementPerBlock: z.string().regex(/^\d+$/),

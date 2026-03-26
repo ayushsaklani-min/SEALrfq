@@ -7,17 +7,31 @@ import { estimateFee } from '../../aleo/fees';
 import { getCurrentBlockHeight } from '../../aleo/executor';
 import { TransactionTracker } from '../../tx/tracker';
 import type { AleoTransaction } from '../../lib/types';
-import { deriveAuctionId, getAuctionState, PROGRAM_IDS, randomField } from '../../lib/sealProtocol';
+import { deriveAuctionId, getAuctionState, PROGRAM_IDS, randomField, TOKEN_TYPE } from '../../lib/sealProtocol';
 
 const prisma = new PrismaClient();
 const tracker = new TransactionTracker(prisma);
 const DEFAULT_NETWORK = process.env.ALEO_NETWORK || 'testnet';
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
+const fieldSchema = (label: string) =>
+    z.string().trim().regex(/^\d+field$/, `${label} must be a full Aleo field such as 123field.`);
+
+function validationMessage(error: unknown, fallback: string) {
+    if (error instanceof z.ZodError) {
+        return error.issues[0]?.message || fallback;
+    }
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+    return fallback;
+}
+
 const CreateVickreySchema = z.object({
-    auctionId: z.string().regex(/^\d+field$/).optional(),
-    salt: z.string().regex(/^\d+field$/),
-    rfqId: z.string().regex(/^\d+field$/),
+    auctionId: fieldSchema('Auction id').optional(),
+    salt: fieldSchema('Salt'),
+    rfqId: fieldSchema('Linked RFQ id'),
+    tokenType: z.number().int().min(0).max(2),
     biddingDeadline: z.number().int().positive(),
     revealDeadline: z.number().int().positive(),
     minBid: z.string().regex(/^\d+$/),
@@ -26,23 +40,24 @@ const CreateVickreySchema = z.object({
 
 const VickreyCommitSchema = z.object({
     bidAmount: z.string().regex(/^\d+$/),
-    salt: z.string().regex(/^\d+field$/),
+    salt: fieldSchema('Salt'),
     stake: z.string().regex(/^\d+$/),
-    bidId: z.string().regex(/^\d+field$/).optional(),
+    bidId: fieldSchema('Bid id').optional(),
     txHash: z.string().optional(),
 });
 
 const VickreyRevealSchema = z.object({
-    bidId: z.string().regex(/^\d+field$/),
+    bidId: fieldSchema('Bid id'),
     amount: z.string().regex(/^\d+$/),
-    salt: z.string().regex(/^\d+field$/),
+    salt: fieldSchema('Salt'),
     txHash: z.string().optional(),
 });
 
 const CreateDutchSchema = z.object({
-    auctionId: z.string().regex(/^\d+field$/).optional(),
-    salt: z.string().regex(/^\d+field$/),
-    rfqId: z.string().regex(/^\d+field$/),
+    auctionId: fieldSchema('Auction id').optional(),
+    salt: fieldSchema('Salt'),
+    rfqId: fieldSchema('Linked RFQ id'),
+    tokenType: z.number().int().min(0).max(2),
     startPrice: z.string().regex(/^\d+$/),
     reservePrice: z.string().regex(/^\d+$/),
     decrementPerBlock: z.string().regex(/^\d+$/),
@@ -52,7 +67,7 @@ const CreateDutchSchema = z.object({
 });
 
 const DutchAcceptSchema = z.object({
-    salt: z.string().regex(/^\d+field$/),
+    salt: fieldSchema('Salt'),
     txHash: z.string().optional(),
 });
 
@@ -129,6 +144,18 @@ export async function handleCreateVickreyAuction(request: NextRequest) {
 
     try {
         const data = CreateVickreySchema.parse(await request.json());
+        if (data.tokenType !== TOKEN_TYPE.CREDITS) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'VALIDATION_ERROR',
+                        message: 'The current Vickrey contract supports ALEO credits only.',
+                    },
+                },
+                { status: 400 },
+            );
+        }
         const auctionId = await deriveAuctionId(auth.walletAddress, data.salt);
         if (data.auctionId && data.auctionId !== auctionId) {
             return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: 'Supplied auction id does not match the v2 derived id for this wallet and salt.' } }, { status: 400 });
@@ -153,7 +180,10 @@ export async function handleCreateVickreyAuction(request: NextRequest) {
 
         return NextResponse.json({ status: 'success', data: { auctionId, txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to create Vickrey auction.') } },
+            { status: 400 },
+        );
     }
 }
 
@@ -163,6 +193,63 @@ export async function handleVickreyCommitBid(request: NextRequest, auctionId: st
 
     try {
         const data = VickreyCommitSchema.parse(await request.json());
+        const [auction, currentBlock] = await Promise.all([getAuctionState('vickrey', auctionId), getCurrentBlockHeight()]);
+        const bidAmount = BigInt(data.bidAmount);
+        const postedStake = BigInt(data.stake);
+        const flatStake = auction.flatStake ? BigInt(auction.flatStake) : 0n;
+        const revealStakeFloor = bidAmount / 10n;
+        const revealRequiredStake = revealStakeFloor > 0n ? revealStakeFloor : 1n;
+        const requiredStake = flatStake > revealRequiredStake ? flatStake : revealRequiredStake;
+
+        if (bidAmount <= 0n) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'INVALID_AMOUNT',
+                        message: 'Bid amount must be greater than zero.',
+                    },
+                },
+                { status: 400 },
+            );
+        }
+        if (auction.statusCode !== 1) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'INVALID_STATE',
+                        message: 'This auction is not accepting commit bids anymore.',
+                    },
+                },
+                { status: 400 },
+            );
+        }
+        if (auction.biddingDeadline && currentBlock >= auction.biddingDeadline) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'DEADLINE_PASSED',
+                        message: `Commit phase closed at block ${auction.biddingDeadline}.`,
+                    },
+                },
+                { status: 400 },
+            );
+        }
+        if (postedStake < requiredStake) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'INVALID_STAKE',
+                        message: `Stake must be at least ${requiredStake.toString()} microcredits for this bid.`,
+                    },
+                },
+                { status: 400 },
+            );
+        }
+
         const bidId = data.bidId ?? randomField();
         if (!data.txHash) {
             const tx: AleoTransaction = {
@@ -177,7 +264,10 @@ export async function handleVickreyCommitBid(request: NextRequest, auctionId: st
 
         return NextResponse.json({ status: 'success', data: { bidId, txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to commit bid.') } },
+            { status: 400 },
+        );
     }
 }
 
@@ -200,7 +290,10 @@ export async function handleVickreyRevealBid(request: NextRequest, auctionId: st
 
         return NextResponse.json({ status: 'success', data: { bidId: data.bidId, txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to reveal bid.') } },
+            { status: 400 },
+        );
     }
 }
 
@@ -280,6 +373,18 @@ export async function handleCreateDutchAuction(request: NextRequest) {
 
     try {
         const data = CreateDutchSchema.parse(await request.json());
+        if (data.tokenType !== TOKEN_TYPE.CREDITS) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    error: {
+                        code: 'VALIDATION_ERROR',
+                        message: 'The current Dutch auction contract supports ALEO credits only.',
+                    },
+                },
+                { status: 400 },
+            );
+        }
         const auctionId = await deriveAuctionId(auth.walletAddress, data.salt);
         if (data.auctionId && data.auctionId !== auctionId) {
             return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: 'Supplied auction id does not match the v2 derived id for this wallet and salt.' } }, { status: 400 });
@@ -306,7 +411,10 @@ export async function handleCreateDutchAuction(request: NextRequest) {
 
         return NextResponse.json({ status: 'success', data: { auctionId, txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to create Dutch auction.') } },
+            { status: 400 },
+        );
     }
 }
 
@@ -329,7 +437,10 @@ export async function handleDutchCommitAccept(request: NextRequest, auctionId: s
 
         return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to commit accept.') } },
+            { status: 400 },
+        );
     }
 }
 
@@ -352,7 +463,10 @@ export async function handleDutchAcceptPrice(request: NextRequest, auctionId: st
 
         return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to accept Dutch price.') } },
+            { status: 400 },
+        );
     }
 }
 
@@ -375,7 +489,10 @@ export async function handleDutchConfirmAccept(request: NextRequest, auctionId: 
 
         return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
     } catch (error: any) {
-        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+        return NextResponse.json(
+            { status: 'error', error: { code: 'VALIDATION_ERROR', message: validationMessage(error, 'Failed to confirm accept.') } },
+            { status: 400 },
+        );
     }
 }
 

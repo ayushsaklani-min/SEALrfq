@@ -8,6 +8,7 @@ export default function Footer() {
     const pathname = usePathname();
     const { walletAddress } = useWallet();
 
+    if (pathname === '/' || pathname === '/select-role') return null;
     if (!walletAddress && pathname === '/') return null;
 
     return (

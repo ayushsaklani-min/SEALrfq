@@ -84,9 +84,9 @@ function finalTransition(tokenType: number) {
 }
 
 function invoiceTransition(tokenType: number) {
-    if (tokenType === TOKEN_TYPE.USDCX) return { fn: 'pay_invoice_usdcx', actionTag: ACTION_TAG.INVOICE_USDCX };
-    if (tokenType === TOKEN_TYPE.USAD) return { fn: 'pay_invoice_usad', actionTag: ACTION_TAG.INVOICE_USAD };
-    return { fn: 'pay_invoice', actionTag: ACTION_TAG.INVOICE_CREDITS };
+    if (tokenType === TOKEN_TYPE.USDCX) return { fn: 'pay_invoice_usdcx', actionTag: ACTION_TAG.INVOICE_USDCX, program: PROGRAM_IDS.invoice };
+    if (tokenType === TOKEN_TYPE.USAD) return { fn: 'pay_invoice_usad', actionTag: ACTION_TAG.INVOICE_USAD, program: PROGRAM_IDS.invoice };
+    return { fn: 'pay_invoice', actionTag: ACTION_TAG.INVOICE_CREDITS, program: PROGRAM_IDS.rfq };
 }
 
 function winnerClaimTransition(tokenType: number) {
@@ -213,28 +213,27 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
         }
 
         const remaining = state.escrow.totalAmount - state.releasedAmount;
-        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid) {
-            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Partial releases are only available before invoice payment.' } }, { status: 400 });
-        }
-        if (data.amount <= 0n || data.amount > remaining) {
-            return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: `Amount must be between 1 and ${remaining}.` } }, { status: 400 });
-        }
-
-        const scaled = data.amount * 100n;
-        if (scaled % remaining !== 0n) {
-            return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Partial releases must resolve to an exact integer percentage of the remaining escrow.' } }, { status: 400 });
-        }
-
-        const percentage = Number(scaled / remaining);
-        if (percentage <= 0 || percentage > 100) {
-            return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Partial release percentage must be between 1 and 100.' } }, { status: 400 });
-        }
-
-        const feeBps = feeBpsForToken(state.chain.escrowToken, state.platform.feeBps);
-        const newTotalReleased = state.releasedAmount + data.amount;
         const transition = partialTransition(state.chain.escrowToken);
 
         if (!data.txHash) {
+            if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Partial releases are only available before invoice payment.' } }, { status: 400 });
+            }
+            if (data.amount <= 0n || data.amount > remaining) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: `Amount must be between 1 and ${remaining}.` } }, { status: 400 });
+            }
+            const scaled = data.amount * 100n;
+            if (scaled % remaining !== 0n) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Partial releases must resolve to an exact integer percentage of the remaining escrow.' } }, { status: 400 });
+            }
+
+            const percentage = Number(scaled / remaining);
+            if (percentage <= 0 || percentage > 100) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Partial release percentage must be between 1 and 100.' } }, { status: 400 });
+            }
+
+            const feeBps = feeBpsForToken(state.chain.escrowToken, state.platform.feeBps);
+            const newTotalReleased = state.releasedAmount + data.amount;
             const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
             const idempotencyKey = `release_partial_${rfqId}_${crypto.randomUUID()}`;
             const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, `partial_${newTotalReleased}`);
@@ -257,6 +256,19 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
             return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
         }
 
+        const existingPayment = await prisma.payment.findFirst({
+            where: { releasedTxId: data.txHash },
+            select: { id: true },
+        });
+        if (existingPayment) {
+            return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
+        }
+
+        const boundedNewTotalRaw = state.releasedAmount + data.amount;
+        const boundedNewTotal =
+            boundedNewTotalRaw > state.escrow.totalAmount ? state.escrow.totalAmount : boundedNewTotalRaw;
+        const isFinal = boundedNewTotal >= state.escrow.totalAmount || state.chain.status === RFQ_STATUS.COMPLETED;
+
         await prisma.$transaction([
             prisma.payment.create({
                 data: {
@@ -271,8 +283,16 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
             }),
             prisma.escrow.update({
                 where: { rfqId },
-                data: { releasedAmount: newTotalReleased },
+                data: { releasedAmount: boundedNewTotal, isFinal },
             }),
+            ...(isFinal
+                ? [
+                      prisma.rFQ.update({
+                          where: { id: rfqId },
+                          data: { status: RFQ_STATUS.COMPLETED },
+                      }),
+                  ]
+                : []),
         ]);
 
         return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
@@ -293,14 +313,14 @@ export async function handleRecoverEscrowBond(request: NextRequest, rfqId: strin
     }
 
     const remaining = state.escrow.totalAmount - state.releasedAmount;
-    if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || !state.chain.paid || remaining <= 0n) {
-        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Escrow bond recovery is only available after invoice payment.' } }, { status: 400 });
-    }
-
-    const feeBps = feeBpsForToken(state.chain.escrowToken, state.platform.feeBps);
     const transition = finalTransition(state.chain.escrowToken);
 
     if (!txHash) {
+        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || !state.chain.paid || remaining <= 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Escrow bond recovery is only available after invoice payment.' } }, { status: 400 });
+        }
+
+        const feeBps = feeBpsForToken(state.chain.escrowToken, state.platform.feeBps);
         const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
         const idempotencyKey = `recover_bond_${rfqId}_${crypto.randomUUID()}`;
         const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, 'recover_bond');
@@ -313,6 +333,28 @@ export async function handleRecoverEscrowBond(request: NextRequest, rfqId: strin
 
         await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
         return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+    }
+
+    const existingPayment = await prisma.payment.findFirst({
+        where: { releasedTxId: txHash },
+        select: { id: true },
+    });
+    if (existingPayment) {
+        return NextResponse.json({ status: 'success', data: { txHash } });
+    }
+
+    if (remaining <= 0n) {
+        await prisma.$transaction([
+            prisma.escrow.update({
+                where: { rfqId },
+                data: { releasedAmount: state.escrow.totalAmount, isFinal: true },
+            }),
+            prisma.rFQ.update({
+                where: { id: rfqId },
+                data: { status: RFQ_STATUS.COMPLETED },
+            }),
+        ]);
+        return NextResponse.json({ status: 'success', data: { txHash } });
     }
 
     await prisma.$transaction([
@@ -350,15 +392,16 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
         if (!state.rfq || !state.escrow || state.rfq.buyer !== auth.walletAddress) {
             return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can pay the invoice.' } }, { status: 403 });
         }
-        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.releasedAmount > 0n) {
-            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Invoice payment is only available before any public release.' } }, { status: 400 });
-        }
 
         const amount = state.winningAmount;
         const transition = invoiceTransition(state.chain.escrowToken);
         const txHash = data.txHash;
 
         if (!txHash) {
+            if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.releasedAmount > 0n) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Invoice payment is only available before any public release.' } }, { status: 400 });
+            }
+
             const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
             const idempotencyKey = `pay_invoice_${rfqId}_${crypto.randomUUID()}`;
             const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, 'invoice');
@@ -367,7 +410,7 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
                     ? []
                     : [`[${data.proofA ?? 'proof_a'}, ${data.proofB ?? 'proof_b'}]`];
             const tx: AleoTransaction = {
-                program: PROGRAM_IDS.rfq,
+                program: transition.program,
                 function: transition.fn,
                 inputs: [
                     rfqId,
@@ -375,7 +418,8 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
                     `${amount}u64`,
                     `${userNonce}u64`,
                     data.receiptNonce,
-                    data.paymentRecord,
+                    // paymentRecord is injected client-side as a plaintext record object
+                    // via the wallet adapter — not sent through the backend.
                     ...proofInput,
                 ],
                 fee: estimateFee(transition.fn),
@@ -383,6 +427,17 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
 
             await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
             return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+        }
+
+        if (state.rfq.paid || state.chain.paid) {
+            return NextResponse.json({
+                status: 'success',
+                data: {
+                    txHash,
+                    receiptHash: state.rfq.receiptHash ?? state.chain.receiptHash ?? null,
+                    paymentCommitment: null,
+                },
+            });
         }
 
         const receiptHash = await deriveReceiptHash(
@@ -424,12 +479,12 @@ export async function handleWinnerClaimEscrow(request: NextRequest, rfqId: strin
     const remaining = state.escrow.totalAmount - state.releasedAmount;
     const mode = state.releasedAmount > 0n ? 1 : 0;
     const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
-    if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.currentBlock <= recoveryBlock || remaining <= 0n) {
-        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Winner claim is not available yet.' } }, { status: 400 });
-    }
-
     const transition = winnerClaimTransition(state.chain.escrowToken);
     if (!txHash) {
+        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.currentBlock <= recoveryBlock || remaining <= 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Winner claim is not available yet.' } }, { status: 400 });
+        }
+
         const idempotencyKey = `winner_claim_${rfqId}_${crypto.randomUUID()}`;
         const canonicalKey = `winner_claim:${rfqId}:${mode}`;
         const tx: AleoTransaction = {
@@ -441,6 +496,28 @@ export async function handleWinnerClaimEscrow(request: NextRequest, rfqId: strin
 
         await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
         return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+    }
+
+    const existingPayment = await prisma.payment.findFirst({
+        where: { releasedTxId: txHash },
+        select: { id: true },
+    });
+    if (existingPayment) {
+        return NextResponse.json({ status: 'success', data: { txHash, mode } });
+    }
+
+    if (remaining <= 0n) {
+        await prisma.$transaction([
+            prisma.escrow.update({
+                where: { rfqId },
+                data: { releasedAmount: state.escrow.totalAmount, isFinal: true },
+            }),
+            prisma.rFQ.update({
+                where: { id: rfqId },
+                data: { status: RFQ_STATUS.COMPLETED },
+            }),
+        ]);
+        return NextResponse.json({ status: 'success', data: { txHash, mode } });
     }
 
     await prisma.$transaction([
@@ -482,12 +559,12 @@ export async function handleCreatorReclaimEscrow(request: NextRequest, rfqId: st
 
     const remaining = state.escrow.totalAmount - state.releasedAmount;
     const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
-    if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.currentBlock <= recoveryBlock || remaining <= 0n) {
-        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Creator reclaim is not available yet.' } }, { status: 400 });
-    }
-
     const transition = creatorReclaimTransition(state.chain.escrowToken);
     if (!txHash) {
+        if (state.chain.status !== RFQ_STATUS.ESCROW_FUNDED || state.chain.paid || state.currentBlock <= recoveryBlock || remaining <= 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Creator reclaim is not available yet.' } }, { status: 400 });
+        }
+
         const idempotencyKey = `creator_reclaim_${rfqId}_${crypto.randomUUID()}`;
         const canonicalKey = `creator_reclaim:${rfqId}`;
         const tx: AleoTransaction = {
@@ -499,6 +576,20 @@ export async function handleCreatorReclaimEscrow(request: NextRequest, rfqId: st
 
         await prepareTrackedTransition(tx, idempotencyKey, canonicalKey);
         return NextResponse.json({ status: 'success', data: { tx: { idempotencyKey, canonicalTxKey: canonicalKey, request: buildWalletTxRequest(tx) } } });
+    }
+
+    if (remaining <= 0n) {
+        await prisma.$transaction([
+            prisma.escrow.update({
+                where: { rfqId },
+                data: { releasedAmount: state.escrow.totalAmount, isFinal: true },
+            }),
+            prisma.rFQ.update({
+                where: { id: rfqId },
+                data: { status: RFQ_STATUS.CANCELLED },
+            }),
+        ]);
+        return NextResponse.json({ status: 'success', data: { txHash } });
     }
 
     await prisma.$transaction([

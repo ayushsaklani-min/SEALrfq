@@ -2,7 +2,8 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { PageShell, PageHeader, Panel } from '@/components/protocol/ProtocolPrimitives';
+import { Button } from '@/components/ui/Button';
+import { Field, Notice, PageHeader, PageShell, Panel, TextInput } from '@/components/protocol/ProtocolPrimitives';
 
 export default function AuditHomePage() {
     const router = useRouter();
@@ -18,24 +19,26 @@ export default function AuditHomePage() {
     return (
         <PageShell>
             <PageHeader
+                eyebrow="Audit"
                 title="Audit Trail"
                 description="Enter an RFQ ID to inspect the event trail and export it as CSV."
             />
-            <Panel>
+            <Panel title="Open audit workspace" subtitle="Load the indexed event trail for a single RFQ.">
                 <form onSubmit={openAudit} className="space-y-4">
-                    <input
-                        type="text"
-                        value={rfqId}
-                        onChange={(e) => setRfqId(e.target.value)}
-                        placeholder="e.g. 1771260740925field"
-                        className="w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] px-4 py-3 text-white placeholder:text-[hsl(var(--muted-foreground))]"
-                    />
-                    <button
-                        type="submit"
-                        className="w-full rounded-lg bg-[hsl(var(--primary))] px-4 py-3 text-sm font-medium text-[hsl(var(--primary-foreground))] transition hover:opacity-90"
-                    >
-                        Open Audit View
-                    </button>
+                    <Field label="RFQ id" hint="Paste the exact RFQ id stored on-chain.">
+                        <TextInput
+                            type="text"
+                            value={rfqId}
+                            onChange={(e) => setRfqId(e.target.value)}
+                            placeholder="e.g. 1771260740925field"
+                        />
+                    </Field>
+                    {!rfqId.trim() ? (
+                        <Notice title="Tip">You can export a CSV after loading the trail.</Notice>
+                    ) : null}
+                    <Button type="submit" className="w-full">
+                        Open audit view
+                    </Button>
                 </form>
             </Panel>
         </PageShell>

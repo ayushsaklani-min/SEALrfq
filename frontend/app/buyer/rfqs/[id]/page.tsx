@@ -7,6 +7,7 @@ import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     Field,
@@ -20,10 +21,13 @@ import {
     StatusChip,
     TextInput,
     TokenChip,
+    WorkflowGuide,
+    type WorkflowGuideStep,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { formatAmount, PRICING_MODE, pricingLabel, TIMING } from '@/lib/sealProtocol';
+import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
 
@@ -75,6 +79,10 @@ type ImportForm = {
 
 function parseCount(value?: string | null) {
     return Number(value || '0');
+}
+
+function hasReached(block: number | null, deadline: number) {
+    return block !== null && block >= deadline;
 }
 
 function resolveCancelMode(rfq: RFQDetail, currentBlock: number | null) {
@@ -285,6 +293,18 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
     }
 
     const cancelMode = resolveCancelMode(rfq, currentBlock);
+    const bidCount = parseCount(rfq.bidCount);
+    const minBidCount = parseCount(rfq.minBidCount) || 1;
+    const revealedCount = bids.filter((bid) => bid.isRevealed).length;
+    const biddingClosed = hasReached(currentBlock, rfq.biddingDeadline);
+    const revealClosed = hasReached(currentBlock, rfq.revealDeadline);
+    const revealWindowOpen = currentBlock !== null && currentBlock >= rfq.biddingDeadline && currentBlock < rfq.revealDeadline;
+    const noRevealDeadlock =
+        rfq.pricingMode === PRICING_MODE.RFQ &&
+        rfq.status === 'OPEN' &&
+        revealClosed &&
+        bidCount >= minBidCount &&
+        revealedCount === 0;
     const slashWindowOpen =
         currentBlock !== null &&
         currentBlock > rfq.revealDeadline &&
@@ -294,16 +314,75 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
         rfq.pricingMode === PRICING_MODE.RFQ &&
         rfq.status === 'REVEAL' &&
         currentBlock !== null &&
-        currentBlock >= rfq.revealDeadline;
+        currentBlock >= rfq.revealDeadline &&
+        revealedCount > 0;
     const canImportAuction =
         rfq.pricingMode !== PRICING_MODE.RFQ &&
         rfq.status === 'OPEN' &&
         !rfq.auctionSource &&
-        parseCount(rfq.bidCount) === 0 &&
-        currentBlock !== null &&
-        currentBlock <= rfq.revealDeadline;
+        bidCount === 0;
     const canFundEscrow = rfq.status === 'WINNER_SELECTED' && rfq.winnerAccepted && Boolean(rfq.winningBidAmount);
-    const revealedCount = bids.filter((bid) => bid.isRevealed).length;
+    const auctionLabel = pricingLabel(rfq.pricingMode);
+    const auctionWorkspaceHref =
+        rfq.pricingMode === PRICING_MODE.VICKREY
+            ? `/auctions/vickrey?rfqId=${encodeURIComponent(rfq.id)}&from=rfq`
+            : `/auctions/dutch?rfqId=${encodeURIComponent(rfq.id)}&from=rfq`;
+    const auctionWorkflowSteps: WorkflowGuideStep[] =
+        rfq.pricingMode === PRICING_MODE.RFQ
+            ? []
+            : [
+                  {
+                      title: `Open the linked ${auctionLabel} workspace`,
+                      description: `Create a linked ${auctionLabel} auction for this RFQ, or continue an existing one until it reaches a final winner and price.`,
+                      state: rfq.auctionSource ? 'complete' : ('current' as const),
+                      action: (
+                          <ActionBar>
+                              <Link href={auctionWorkspaceHref}>
+                                  <Button size="sm">{`Open ${auctionLabel} workspace`}</Button>
+                              </Link>
+                          </ActionBar>
+                      ),
+                  },
+                  {
+                      title: 'Import the finalized auction result',
+                      description: 'Return here with the auction id, winner address, and final price, then import that finalized result into this RFQ.',
+                      state: rfq.auctionSource ? 'complete' : ('upcoming' as const),
+                  },
+                  {
+                      title: 'Wait for the winner to respond',
+                      description: 'Once the auction result is imported, the selected winner must accept before escrow can be funded.',
+                      state:
+                          rfq.auctionSource && rfq.status === 'WINNER_SELECTED' && !rfq.winnerAccepted
+                              ? 'current'
+                              : rfq.winnerAccepted || rfq.status === 'ESCROW_FUNDED' || rfq.status === 'COMPLETED'
+                                ? 'complete'
+                                : 'upcoming',
+                  },
+                  {
+                      title: 'Fund escrow and continue settlement',
+                      description: 'After winner acceptance, fund the winning amount and continue the rest of the workflow in escrow.',
+                      state:
+                          rfq.status === 'ESCROW_FUNDED' || rfq.status === 'COMPLETED'
+                              ? 'complete'
+                              : canFundEscrow
+                                ? 'current'
+                                : 'upcoming',
+                      action:
+                          rfq.status === 'ESCROW_FUNDED' || rfq.status === 'COMPLETED' ? (
+                              <ActionBar>
+                                  <Link href={`/escrow/${encodeURIComponent(rfq.id)}`}>
+                                      <Button size="sm" variant="secondary">Open escrow</Button>
+                                  </Link>
+                              </ActionBar>
+                          ) : canFundEscrow ? (
+                              <ActionBar>
+                                  <Link href={`/buyer/rfqs/${encodeURIComponent(rfq.id)}/fund-escrow`}>
+                                      <Button size="sm">Fund escrow</Button>
+                                  </Link>
+                              </ActionBar>
+                          ) : null,
+                  },
+              ];
 
     return (
         <PageShell className="space-y-6">
@@ -332,11 +411,19 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                 <div className="space-y-6">
                     <Panel title="Summary">
                         <DataGrid columns={3}>
+                            <DataPoint label="RFQ id" value={<CopyableText value={rfq.id} displayValue={truncateMiddle(rfq.id, 16, 10)} />} />
                             <DataPoint label="Minimum bid" value={formatAmount(rfq.minBid, rfq.tokenType)} />
                             <DataPoint label="Flat stake" value={rfq.flatStake ? formatAmount(rfq.flatStake, 0) : '--'} />
                             <DataPoint label="Bid count" value={`${rfq.bidCount ?? '0'} / ${rfq.minBidCount ?? '1'}`} />
                             <DataPoint label="Revealed bids" value={revealedCount} />
-                            <DataPoint label="Winner" value={rfq.winningVendor || '--'} />
+                            <DataPoint
+                                label="Winner"
+                                value={
+                                    rfq.winningVendor
+                                        ? <CopyableText value={rfq.winningVendor} displayValue={truncateMiddle(rfq.winningVendor, 14, 10)} />
+                                        : '--'
+                                }
+                            />
                             <DataPoint label="Winning amount" value={rfq.winningBidAmount ? formatAmount(rfq.winningBidAmount, rfq.tokenType) : '--'} />
                             <DataPoint label="Winner accepted" value={rfq.winnerAccepted ? 'Yes' : 'No'} />
                         </DataGrid>
@@ -345,6 +432,15 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                             <DeadlineCountdown deadlineBlock={rfq.revealDeadline} label="Reveal deadline" passedLabel="Reveal closed" />
                         </div>
                     </Panel>
+
+                    {rfq.pricingMode !== PRICING_MODE.RFQ ? (
+                        <Panel
+                            title={`${auctionLabel} workflow`}
+                            subtitle={`This RFQ does not pick a winner directly. It waits for a linked ${auctionLabel} auction result and then resumes the standard winner-response and escrow flow.`}
+                        >
+                            <WorkflowGuide steps={auctionWorkflowSteps} />
+                        </Panel>
+                    ) : null}
 
                     <Panel
                         title="Next action"
@@ -355,6 +451,12 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                                   ? 'The winner accepted. Fund the winning amount to start settlement.'
                                   : canSelectWinner
                                     ? 'Reveal has ended. Pick the winning revealed bid below.'
+                                    : noRevealDeadlock
+                                      ? 'Reveal has ended with zero revealed bids. This RFQ cannot advance on-chain in the current contract version.'
+                                      : revealWindowOpen
+                                        ? 'Bidding is closed. Waiting for vendors to reveal committed bids.'
+                                        : !biddingClosed
+                                          ? 'Bidding is still open. Buyer actions unlock after the deadline phases complete.'
                                     : 'The next available action depends on the current contract state.'
                         }
                     >
@@ -380,14 +482,38 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                                 <Field label="Escrow amount" hint="This should match the winning amount.">
                                     <TextInput value={fundAmount} onChange={(event) => setFundAmount(event.target.value)} placeholder="Winning amount in micro-units" />
                                 </Field>
-                                <Button onClick={fundEscrow} isLoading={actionBusy}>
-                                    Fund escrow
-                                </Button>
+                                <ActionBar>
+                                    <Link href={`/buyer/rfqs/${encodeURIComponent(rfq.id)}/fund-escrow`}>
+                                        <Button>Fund escrow</Button>
+                                    </Link>
+                                    <Button variant="secondary" onClick={fundEscrow} isLoading={actionBusy}>
+                                        Fund here instead
+                                    </Button>
+                                </ActionBar>
                             </div>
                         ) : canSelectWinner ? (
-                            <div className="text-sm text-[hsl(var(--muted-foreground))]">
-                                Choose the winner from the revealed bids list below.
-                            </div>
+                            <ActionBar>
+                                <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                                    Choose the winner from the revealed bids list below, or open the dedicated selection page.
+                                </div>
+                                <Link href={`/buyer/rfqs/${encodeURIComponent(rfq.id)}/select-winner`}>
+                                    <Button>Select winner</Button>
+                                </Link>
+                            </ActionBar>
+                        ) : noRevealDeadlock ? (
+                            <Notice tone="warning" title="No revealed bids">
+                                Vendors committed bids, but none were revealed before the reveal deadline. The current `sealrfq_v18.aleo`
+                                contract does not expose a buyer action for this state, so there is no winner to select and no cancel path yet.
+                            </Notice>
+                        ) : rfq.status === 'ESCROW_FUNDED' ? (
+                            <ActionBar>
+                                <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                                    Escrow is funded. Continue settlement in the escrow workspace.
+                                </div>
+                                <Link href={`/escrow/${encodeURIComponent(rfq.id)}`}>
+                                    <Button>Go to escrow</Button>
+                                </Link>
+                            </ActionBar>
                         ) : (
                             <InfoList>
                                 <InfoRow label="Current status" value={rfq.status} />
@@ -403,16 +529,20 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                         ) : (
                             <div className="space-y-3">
                                 {bids.map((bid) => (
-                                    <div key={bid.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
+                                    <div key={bid.id} className="rounded-xl border border-white/12 bg-white/[0.05] p-4 transition hover:border-white/20">
                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div className="min-w-0">
-                                                <div className="text-sm font-medium text-white">{bid.vendor}</div>
-                                                <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{bid.id}</div>
+                                                <div className="max-w-fit">
+                                                    <CopyableText value={bid.vendor} displayValue={truncateMiddle(bid.vendor, 14, 10)} className="text-sm font-semibold" />
+                                                </div>
+                                                <div className="mt-2 max-w-fit">
+                                                    <CopyableText value={bid.id} displayValue={truncateMiddle(bid.id, 14, 8)} />
+                                                </div>
                                             </div>
-                                            <div className="text-sm text-[hsl(var(--muted-foreground))] lg:text-right">
-                                                <div>{bid.isWinner ? 'Winner' : bid.isRevealed ? 'Revealed' : 'Committed only'}</div>
-                                                <div>Stake: {formatAmount(bid.stake, 0)}</div>
-                                                <div>Bid: {bid.revealedAmount ? formatAmount(bid.revealedAmount, rfq.tokenType) : '--'}</div>
+                                            <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] px-4 py-3 text-sm lg:min-w-[220px]">
+                                                <div className={bid.isWinner ? 'font-semibold text-emerald-300' : 'text-white/70'}>{bid.isWinner ? 'Winner' : bid.isRevealed ? 'Revealed' : 'Committed only'}</div>
+                                                <div className="text-white/60">Stake: <span className="text-white font-medium">{formatAmount(bid.stake, 0)}</span></div>
+                                                <div className="text-white/60">Bid: <span className="text-white font-medium">{bid.revealedAmount ? formatAmount(bid.revealedAmount, rfq.tokenType) : '--'}</span></div>
                                             </div>
                                         </div>
                                         <ActionBar className="mt-3">
@@ -437,22 +567,36 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                 <div className="space-y-6">
                     <Panel title="Winning bid">
                         <InfoList>
-                            <InfoRow label="Winning bid id" value={rfq.winningBidId || '--'} />
-                            <InfoRow label="Vendor" value={rfq.winningVendor || '--'} />
+                            <InfoRow
+                                label="Winning bid id"
+                                value={rfq.winningBidId ? <CopyableText value={rfq.winningBidId} displayValue={truncateMiddle(rfq.winningBidId, 14, 8)} /> : '--'}
+                            />
+                            <InfoRow
+                                label="Vendor"
+                                value={rfq.winningVendor ? <CopyableText value={rfq.winningVendor} displayValue={truncateMiddle(rfq.winningVendor, 14, 10)} /> : '--'}
+                            />
                             <InfoRow label="Amount" value={rfq.winningBidAmount ? formatAmount(rfq.winningBidAmount, rfq.tokenType) : '--'} />
                             <InfoRow label="Accepted" value={rfq.winnerAccepted ? 'Yes' : 'No'} />
                             <InfoRow label="Private payment" value={rfq.paid ? 'Yes' : 'No'} />
                         </InfoList>
-                        <ActionBar className="mt-4">
-                            <Link href={`/escrow/${encodeURIComponent(rfq.id)}`}>
-                                <Button variant="secondary">Open escrow</Button>
-                            </Link>
-                        </ActionBar>
+                        {rfq.status === 'ESCROW_FUNDED' ? (
+                            <ActionBar className="mt-4">
+                                <Link href={`/escrow/${encodeURIComponent(rfq.id)}`}>
+                                    <Button variant="secondary">Go to escrow</Button>
+                                </Link>
+                            </ActionBar>
+                        ) : null}
                     </Panel>
 
                     <Panel title="Lifecycle controls">
                         {canSelectWinner ? (
                             <Notice title="Winner selection is open">Reveal is complete. The lowest valid revealed bid can now be selected.</Notice>
+                        ) : null}
+                        {noRevealDeadlock ? (
+                            <Notice tone="warning" title="Contract blocked">
+                                This RFQ met the minimum bid count, but zero bids were revealed. `v18` only moves into `REVEAL` on the first reveal,
+                                so this RFQ is stuck in `OPEN` and needs a contract-level recovery path.
+                            </Notice>
                         ) : null}
                         {slashWindowOpen ? (
                             <Notice tone="warning" title="Slash window open">
@@ -461,7 +605,7 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                         ) : null}
                         {cancelMode ? (
                             <div className="space-y-3">
-                                <div className="text-sm text-[hsl(var(--muted-foreground))]">Available cancel path: <span className="font-medium text-white">{cancelMode.label}</span></div>
+                                <div className="text-sm text-white/60">Available cancel path: <span className="font-medium text-white">{cancelMode.label}</span></div>
                                 <Button variant="danger" onClick={cancelRfq} isLoading={actionBusy}>
                                     Cancel RFQ
                                 </Button>

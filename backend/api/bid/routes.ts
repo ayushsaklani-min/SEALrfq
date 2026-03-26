@@ -10,6 +10,7 @@ import type { AleoTransaction } from '../../lib/types';
 import {
     ACTION_TAG,
     deriveCommitment,
+    getNextActionNonceFromChain,
     PROGRAM_IDS,
     RFQ_STATUS,
     canonicalActionKey,
@@ -52,13 +53,7 @@ async function prepareTrackedTransition(tx: AleoTransaction, idempotencyKey: str
 }
 
 async function nextActionNonce(walletAddress: string, rfqId: string, actionTag: number) {
-    const confirmed = await prisma.transaction.count({
-        where: {
-            status: 'CONFIRMED',
-            canonicalTxKey: { startsWith: `nonce:${actionTag}:${walletAddress}:${rfqId}` },
-        },
-    });
-    return confirmed + 1;
+    return getNextActionNonceFromChain(walletAddress, rfqId, actionTag);
 }
 
 async function commitmentHash(bidAmount: bigint, nonce: string) {
@@ -71,6 +66,26 @@ function serializeBid(bid: any) {
         stake: bid.stake?.toString(),
         revealedAmount: bid.revealedAmount?.toString() ?? null,
     };
+}
+
+async function recoverCommitBidIdFromTxHash(rfqId: string, walletAddress: string, txHash: string): Promise<string | null> {
+    const existing = await prisma.bid.findFirst({
+        where: { rfqId, vendor: walletAddress, createdTxId: txHash },
+        select: { id: true },
+    });
+    if (existing?.id) return existing.id;
+
+    const tracked = await prisma.transaction.findUnique({
+        where: { txHash },
+        select: { canonicalTxKey: true },
+    });
+    const canonicalKey = tracked?.canonicalTxKey ?? '';
+    if (!canonicalKey || !canonicalKey.includes(`:${rfqId}:`)) {
+        return null;
+    }
+
+    const candidate = canonicalKey.split(':').at(-1) ?? null;
+    return candidate && /^\d+field$/.test(candidate) ? candidate : null;
 }
 
 export async function handleCommitBid(request: NextRequest) {
@@ -100,10 +115,15 @@ export async function handleCommitBid(request: NextRequest) {
 
         const existingBid = await prisma.bid.findFirst({ where: { rfqId: data.rfqId, vendor: auth.walletAddress } });
         if (existingBid) {
+            if (data.txHash) {
+                return NextResponse.json({ status: 'success', data: { bid_id: existingBid.id, txHash: data.txHash } });
+            }
             return NextResponse.json({ status: 'error', error: { code: 'DUPLICATE_BID', message: 'This vendor already committed a bid on the RFQ.' } }, { status: 400 });
         }
 
-        const bidId = data.bidId ?? randomField();
+        const bidId =
+            data.bidId ??
+            (data.txHash ? (await recoverCommitBidIdFromTxHash(data.rfqId, auth.walletAddress, data.txHash)) ?? randomField() : randomField());
         if (!data.txHash) {
             const userNonce = await nextActionNonce(auth.walletAddress, data.rfqId, ACTION_TAG.COMMIT);
             const idempotencyKey = `commit_bid_${bidId}`;
@@ -135,6 +155,14 @@ export async function handleCommitBid(request: NextRequest) {
                     },
                 },
             });
+        }
+
+        const existingByTx = await prisma.bid.findFirst({
+            where: { createdTxId: data.txHash, createdEventIdx: 0 },
+            select: { id: true },
+        });
+        if (existingByTx?.id) {
+            return NextResponse.json({ status: 'success', data: { bid_id: existingByTx.id, txHash: data.txHash } });
         }
 
         const currentBlock = await getCurrentBlockHeight();
@@ -267,6 +295,7 @@ export async function handleGetMyBids(request: NextRequest) {
             const onChainExists = chain.statusCode !== 0;
             return {
                 ...serializeBid(bid),
+                isWinner: onChainExists ? chain.winner === bid.vendor : bid.isWinner,
                 rfqStatus: onChainExists ? chain.status : (rfq?.status ?? chain.status),
                 revealDeadline: onChainExists ? chain.revealDeadline : (rfq?.revealDeadline ?? chain.revealDeadline),
                 biddingDeadline: onChainExists ? chain.biddingDeadline : (rfq?.biddingDeadline ?? chain.biddingDeadline),

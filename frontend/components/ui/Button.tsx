@@ -29,16 +29,16 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref
     ) => {
         const baseStyles =
-            "relative inline-flex items-center justify-center rounded-lg font-medium transition-all focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring)/0.3)] disabled:opacity-50 disabled:cursor-not-allowed";
+            "relative inline-flex items-center justify-center rounded-lg font-medium transition-all focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring)/0.25)] focus:ring-offset-2 focus:ring-offset-white disabled:cursor-not-allowed disabled:opacity-70";
 
         const variants = {
             primary:
-                "bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-[hsl(var(--primary-foreground))] shadow-sm",
+                "border border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] shadow-sm hover:bg-[hsl(var(--primary)/0.92)]",
             secondary:
-                "bg-[hsl(var(--secondary))] hover:bg-[hsl(var(--secondary)/0.8)] text-white border border-[hsl(var(--border))]",
-            ghost: "bg-transparent hover:bg-white/5 text-[hsl(var(--muted-foreground))] hover:text-white",
+                "border border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-50",
+            ghost: "bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900",
             danger:
-                "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20",
+                "border border-red-200 bg-red-50 text-red-700 hover:bg-red-100",
         };
 
         const sizes = {

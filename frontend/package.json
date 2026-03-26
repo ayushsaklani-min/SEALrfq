@@ -9,6 +9,10 @@
     },
     "dependencies": {
         "@aleohq/sdk": "^0.6.9",
+        "@provablehq/aleo-types": "^0.3.0-alpha.3",
+        "@provablehq/aleo-wallet-adaptor-core": "^0.3.0-alpha.3",
+        "@provablehq/aleo-wallet-adaptor-react": "^0.3.0-alpha.3",
+        "@provablehq/aleo-wallet-adaptor-shield": "^0.3.0-alpha.3",
         "@react-three/drei": "^9.121.4",
         "@react-three/fiber": "^8.17.14",
         "@types/three": "^0.172.0",

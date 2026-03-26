@@ -5,6 +5,7 @@ import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
+    CopyableText,
     DataGrid,
     DataPoint,
     Field,
@@ -16,13 +17,15 @@ import {
     Panel,
     PricingChip,
     StatusChip,
+    TextAreaInput,
     TextInput,
     TokenChip,
 } from '@/components/protocol/ProtocolPrimitives';
 import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { calculateFee, formatAmount, netAfterFee, randomField, TOKEN_TYPE } from '@/lib/sealProtocol';
-import { walletFirstTx } from '@/lib/walletTx';
+import { truncateMiddle } from '@/lib/utils';
+import { executeWithAdapter, requestCreditsRecord, submitTrackedResult, walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
 
 type EscrowView = {
@@ -62,14 +65,12 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     const addRecord = useProtocolStore((state) => state.addRecord);
     const [escrow, setEscrow] = useState<EscrowView | null>(null);
     const [partialAmount, setPartialAmount] = useState('');
-    const [paymentRecord, setPaymentRecord] = useState('');
-    const [receiptNonce, setReceiptNonce] = useState(() => randomField());
-    const [proofA, setProofA] = useState('');
-    const [proofB, setProofB] = useState('');
     const [txKey, setTxKey] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [acting, setActing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [invoiceRecord, setInvoiceRecord] = useState('');
+    const [receiptNonce] = useState(() => randomField());
 
     useEffect(() => {
         let cancelled = false;
@@ -110,59 +111,6 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             setTxKey(result.idempotencyKey);
         } catch (caught: any) {
             setError(caught?.message || 'Failed to release partial payment.');
-        } finally {
-            setActing(false);
-        }
-    };
-
-    const payInvoice = async () => {
-        if (!escrow || acting) return;
-        setActing(true);
-        setError(null);
-        try {
-            const payload = {
-                paymentRecord,
-                receiptNonce,
-                proofA,
-                proofB,
-            };
-            const result = await walletFirstTx(
-                `/api/escrow/${encodeURIComponent(escrow.rfqId)}/pay-invoice`,
-                payload,
-                (_prepareData, txHash) => ({ ...payload, txHash }),
-            );
-            addRecord({
-                id: `${escrow.rfqId}:${receiptNonce}`,
-                type: 'InvoiceReceipt',
-                rfqId: escrow.rfqId,
-                owner: walletAddress || escrow.creator || 'unknown',
-                payload: {
-                    receiptNonce,
-                    paymentRecord,
-                },
-                createdAt: new Date().toISOString(),
-            });
-            setTxKey(result.idempotencyKey);
-        } catch (caught: any) {
-            setError(caught?.message || 'Failed to pay invoice.');
-        } finally {
-            setActing(false);
-        }
-    };
-
-    const recoverBond = async () => {
-        if (!escrow || acting) return;
-        setActing(true);
-        setError(null);
-        try {
-            const result = await walletFirstTx(
-                `/api/escrow/${encodeURIComponent(escrow.rfqId)}/recover-bond`,
-                {},
-                (_prepareData, txHash) => ({ txHash }),
-            );
-            setTxKey(result.idempotencyKey);
-        } catch (caught: any) {
-            setError(caught?.message || 'Failed to recover escrow bond.');
         } finally {
             setActing(false);
         }
@@ -214,6 +162,89 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         }
     };
 
+    const payInvoice = async () => {
+        if (!escrow || acting) return;
+        setActing(true);
+        setError(null);
+        try {
+            // Step 1: get the credits record plaintext from Shield wallet
+            let recordToUse = invoiceRecord.trim();
+            if (!recordToUse) {
+                recordToUse = await requestCreditsRecord(Number(escrow.winningAmount));
+            }
+
+            // Step 2: get prepare data from backend (returns 5 inputs, record injected client-side)
+            const { authenticatedFetch } = await import('@/lib/authFetch');
+            const prepareRes = await authenticatedFetch(
+                `/api/escrow/${encodeURIComponent(escrow.rfqId)}/pay-invoice`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paymentRecord: recordToUse, receiptNonce }),
+                },
+            );
+            const prepareJson = await prepareRes.json();
+            if (!prepareRes.ok) throw new Error(prepareJson?.error?.message || 'Prepare failed');
+
+            const { idempotencyKey, request: txRequest } = prepareJson.data.tx;
+
+            // Step 3: inject record as input[5] (credits.record position in pay_invoice)
+            const inputs = [...txRequest.inputs];
+            inputs.splice(5, 0, recordToUse);
+
+            // Step 4: execute via ShieldWalletAdapter directly (NullPay pattern — handles records properly)
+            let txResult: any;
+            try {
+                txResult = await executeWithAdapter({
+                    program: txRequest.program,
+                    function: txRequest.function,
+                    inputs,
+                    fee: Number(txRequest.fee) || 1_000_000,
+                });
+            } catch (walletErr: any) {
+                await submitTrackedResult(idempotencyKey, {
+                    txHash: `wallet_rejected_${Date.now()}`,
+                    status: 'rejected',
+                    error: walletErr?.message || 'Wallet rejected',
+                    rawResponse: { error: walletErr?.message },
+                }).catch(() => {});
+                throw walletErr;
+            }
+
+            const txHash = txResult?.transactionId || txResult?.txId || txResult?.id || txResult?.hash || '';
+            if (!txHash) throw new Error('Wallet did not return a transaction id');
+
+            await submitTrackedResult(idempotencyKey, { txHash, status: 'submitted', rawResponse: txResult });
+
+            // Step 5: confirm with backend
+            const confirmRes = await authenticatedFetch(
+                `/api/escrow/${encodeURIComponent(escrow.rfqId)}/pay-invoice`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ txHash, receiptNonce }),
+                },
+            );
+            const confirmJson = await confirmRes.json();
+            if (!confirmRes.ok) throw new Error(confirmJson?.error?.message || 'Confirmation failed');
+
+            const result = { idempotencyKey, txHash, data: confirmJson.data };
+            addRecord({
+                id: `${escrow.rfqId}:invoice`,
+                type: 'InvoiceReceipt',
+                rfqId: escrow.rfqId,
+                owner: walletAddress || escrow.creator || 'unknown',
+                payload: { receiptNonce },
+                createdAt: new Date().toISOString(),
+            });
+            setTxKey(result.idempotencyKey);
+        } catch (caught: any) {
+            setError(caught?.message || 'Invoice payment failed.');
+        } finally {
+            setActing(false);
+        }
+    };
+
     if (loading) {
         return (
             <PageShell>
@@ -247,7 +278,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             <PageHeader
                 eyebrow="Settlement"
                 title={`Escrow for ${escrow.rfqId}`}
-                description="Manage public releases, private invoice payment, creator bond recovery, and timeout protection actions from one place."
+                description="Manage public releases, view settlement status, and handle timeout protection actions from one place."
                 actions={
                     <ActionBar>
                         <StatusChip status={escrow.status} />
@@ -270,6 +301,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                 <div className="space-y-6">
                     <Panel title="Settlement summary">
                         <DataGrid columns={3}>
+                            <DataPoint label="RFQ id" value={<CopyableText value={escrow.rfqId} displayValue={truncateMiddle(escrow.rfqId, 16, 10)} />} />
                             <DataPoint label="Winning amount" value={formatAmount(escrow.winningAmount, escrow.tokenType)} />
                             <DataPoint label="Released so far" value={formatAmount(escrow.releasedAmount, escrow.tokenType)} />
                             <DataPoint label="Remaining" value={formatAmount(escrow.remainingAmount, escrow.tokenType)} />
@@ -279,7 +311,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         </DataGrid>
                     </Panel>
 
-                    <Panel title="Path A: public releases" subtitle="Use this when paying openly from escrow. Once it starts, the private payment path is locked.">
+                    <Panel title="Path A: public releases" subtitle="Use this when paying openly from escrow.">
                         <div className="space-y-4">
                             <Field label="Release amount" hint="Enter the gross amount in raw micro-units.">
                                 <TextInput
@@ -314,50 +346,71 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         </div>
                     </Panel>
 
-                    <Panel title="Path B: private payment + bond recovery" subtitle="Use this when the winner is paid privately and the creator later recovers the escrow bond.">
-                        <div className="space-y-4">
-                            <Field label="Shielded payment record" hint="Paste the payment record returned by the wallet or stablecoin program.">
-                                <TextInput value={paymentRecord} onChange={(event) => setPaymentRecord(event.target.value)} placeholder="record1..." />
-                            </Field>
-                            <Field label="Receipt nonce" hint="Used for the payment commitment stored in v16 proofs.">
-                                <TextInput value={receiptNonce} onChange={(event) => setReceiptNonce(event.target.value)} placeholder="123field" />
-                            </Field>
-                            {escrow.tokenType !== TOKEN_TYPE.CREDITS ? (
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <Field label="Compliance proof A">
-                                        <TextInput value={proofA} onChange={(event) => setProofA(event.target.value)} placeholder="proofA" />
-                                    </Field>
-                                    <Field label="Compliance proof B">
-                                        <TextInput value={proofB} onChange={(event) => setProofB(event.target.value)} placeholder="proofB" />
-                                    </Field>
-                                </div>
-                            ) : null}
-                            <ActionBar>
-                                <Button
-                                    disabled={!isCreator || escrow.paid || releasedSoFar > 0n || acting}
-                                    isLoading={acting}
-                                    onClick={payInvoice}
+                    {escrow.tokenType === TOKEN_TYPE.CREDITS ? (
+                        <Panel
+                            title="Path B: private invoice"
+                            subtitle="Pay privately using a credits record from your wallet. The buyer's escrow record is not consumed — payment goes directly to the winner."
+                        >
+                            <div className="space-y-4">
+                                <Notice tone="warning" title="Save your receipt nonce">
+                                    This nonce is generated once per page load. Copy and save it before submitting — you will need it to prove payment on-chain later.
+                                </Notice>
+                                <DataGrid columns={2}>
+                                    <DataPoint
+                                        label="Receipt nonce (save this)"
+                                        value={<CopyableText value={receiptNonce} displayValue={receiptNonce.slice(0, 20) + '...'} mono breakAll={false} />}
+                                    />
+                                    <DataPoint label="Invoice amount" value={formatAmount(escrow.winningAmount, escrow.tokenType)} />
+                                </DataGrid>
+                                <Field
+                                    label="Credits record (auto-detected)"
+                                    hint="Shield wallet will automatically provide your private credits record. Only paste manually below if auto-detection fails."
                                 >
-                                    Pay invoice privately
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    disabled={!isCreator || !escrow.canRecoverBond || acting}
-                                    isLoading={acting}
-                                    onClick={recoverBond}
-                                >
-                                    Recover escrow bond
-                                </Button>
-                            </ActionBar>
-                        </div>
-                    </Panel>
+                                    <TextAreaInput
+                                        value={invoiceRecord}
+                                        onChange={(e) => setInvoiceRecord(e.target.value)}
+                                        placeholder="Leave empty for auto-detection, or paste plaintext record manually: { owner: aleo1....private, microcredits: ...u64.private, _nonce: ...public }"
+                                        className="min-h-[80px] font-mono text-xs"
+                                    />
+                                </Field>
+                                <ActionBar>
+                                    <Button
+                                        disabled={!isCreator || escrow.paid || acting || escrow.settlementPathLocked === 'PARTIAL_RELEASES'}
+                                        isLoading={acting}
+                                        onClick={payInvoice}
+                                    >
+                                        Pay invoice privately
+                                    </Button>
+                                    <div className="text-sm text-white/55">
+                                        {escrow.paid
+                                            ? 'Invoice already paid.'
+                                            : escrow.settlementPathLocked === 'PARTIAL_RELEASES'
+                                              ? 'Cannot use Path B after public releases.'
+                                              : 'Auto-detects your credits record from Shield wallet.'}
+                                    </div>
+                                </ActionBar>
+                            </div>
+                        </Panel>
+                    ) : (
+                        <Panel title="Path B: private invoice" subtitle="Not available for this token type.">
+                            <Notice tone="neutral" title="USDCX / USAD invoice">
+                                Private invoice settlement for USDCX and USAD requires compliance MerkleProof records from the token issuer. Use Path A (public releases) for now.
+                            </Notice>
+                        </Panel>
+                    )}
                 </div>
 
                 <div className="space-y-6">
                     <Panel title="Roles and timeout actions">
                         <InfoList>
-                            <InfoRow label="Creator" value={escrow.creator || '--'} />
-                            <InfoRow label="Winner" value={escrow.winner || '--'} />
+                            <InfoRow
+                                label="Creator"
+                                value={escrow.creator ? <CopyableText value={escrow.creator} displayValue={truncateMiddle(escrow.creator, 14, 10)} /> : '--'}
+                            />
+                            <InfoRow
+                                label="Winner"
+                                value={escrow.winner ? <CopyableText value={escrow.winner} displayValue={truncateMiddle(escrow.winner, 14, 10)} /> : '--'}
+                            />
                             <InfoRow label="Escrow total" value={formatAmount(escrow.totalAmount, escrow.tokenType)} />
                             <InfoRow label="Private payment complete" value={escrow.paid ? 'Yes' : 'No'} />
                             <InfoRow
@@ -386,13 +439,13 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         ) : (
                             <div className="space-y-3">
                                 {escrow.payments.map((payment) => (
-                                    <div key={payment.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4">
-                                        <div className="text-sm font-medium text-white">{payment.isFinal ? 'Final' : 'Partial'} release</div>
-                                        <div className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
-                                            {formatAmount(payment.amount, escrow.tokenType)}
+                                    <div key={payment.id} className="rounded-xl border border-white/12 bg-white/[0.05] p-4">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="text-sm font-semibold text-white">{payment.isFinal ? 'Final' : 'Partial'} release</div>
+                                            <div className="text-sm font-bold text-emerald-300">{formatAmount(payment.amount, escrow.tokenType)}</div>
                                         </div>
-                                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                                            {new Date(payment.releasedAt).toLocaleString()} | {payment.recipient}
+                                        <div className="mt-1.5 text-xs text-white/50">
+                                            {new Date(payment.releasedAt).toLocaleString()} · {payment.recipient}
                                         </div>
                                     </div>
                                 ))}

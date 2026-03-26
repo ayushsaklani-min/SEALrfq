@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { CopyInlineButton, CopyableText } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { CheckCircle, Clock, XCircle, AlertTriangle } from 'lucide-react';
 
@@ -92,7 +93,7 @@ export function TxStatusView({
     }
 
     if (error || !tx) {
-        return <div className="rounded-lg border border-red-500/25 bg-red-500/8 p-3 text-sm text-red-300">{error || 'Transaction not found'}</div>;
+        return <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error || 'Transaction not found'}</div>;
     }
 
     const history: Array<{ status: TxStatus; timestamp: string }> = Array.isArray(tx.statusHistory)
@@ -100,11 +101,11 @@ export function TxStatusView({
         : (() => { try { return JSON.parse(tx.statusHistory || '[]'); } catch { return []; } })();
 
     const statusIcon = {
-        PREPARED: <Clock className="h-4 w-4 text-slate-400" />,
-        SUBMITTED: <Clock className="h-4 w-4 text-blue-400 animate-pulse" />,
-        CONFIRMED: <CheckCircle className="h-4 w-4 text-emerald-400" />,
-        REJECTED: <XCircle className="h-4 w-4 text-red-400" />,
-        EXPIRED: <AlertTriangle className="h-4 w-4 text-amber-400" />,
+        PREPARED: <Clock className="h-4 w-4 text-slate-500" />,
+        SUBMITTED: <Clock className="h-4 w-4 animate-pulse text-blue-500" />,
+        CONFIRMED: <CheckCircle className="h-4 w-4 text-emerald-500" />,
+        REJECTED: <XCircle className="h-4 w-4 text-red-500" />,
+        EXPIRED: <AlertTriangle className="h-4 w-4 text-amber-500" />,
     };
 
     const statusLabel = {
@@ -116,53 +117,64 @@ export function TxStatusView({
     };
 
     const statusBg = {
-        PREPARED: 'border-slate-500/25 bg-slate-500/8',
-        SUBMITTED: 'border-blue-500/25 bg-blue-500/8',
-        CONFIRMED: 'border-emerald-500/25 bg-emerald-500/8',
-        REJECTED: 'border-red-500/25 bg-red-500/8',
-        EXPIRED: 'border-amber-500/25 bg-amber-500/8',
+        PREPARED: 'border-slate-200 bg-slate-50',
+        SUBMITTED: 'border-blue-200 bg-blue-50',
+        CONFIRMED: 'border-emerald-200 bg-emerald-50',
+        REJECTED: 'border-red-200 bg-red-50',
+        EXPIRED: 'border-amber-200 bg-amber-50',
     };
 
     return (
-        <div className={`rounded-xl border ${statusBg[tx.status]} ${compact ? 'p-3' : 'p-4'}`}>
-            <div className="flex items-center gap-2 mb-2">
+        <div className={`rounded-2xl border ${statusBg[tx.status]} ${compact ? 'p-3' : 'p-4'}`}>
+            <div className="mb-2 flex items-center gap-2">
                 {statusIcon[tx.status]}
-                <span className="text-sm font-medium text-white">{statusLabel[tx.status]}</span>
-                <span className="text-xs text-[hsl(var(--muted-foreground))]">{tx.transition}</span>
+                <span className="text-sm font-semibold text-slate-950">{statusLabel[tx.status]}</span>
+                <span className="text-xs text-slate-500">{tx.transition}</span>
             </div>
 
             {tx.txHash && (
-                <div className="text-xs text-[hsl(var(--muted-foreground))] font-mono truncate">
-                    Tx: {tx.txHash.startsWith('at1') ? (
-                        <a href={`https://explorer.aleo.org/transaction/${tx.txHash}`} target="_blank" rel="noopener noreferrer" className="text-[hsl(var(--primary))] hover:underline">
-                            {tx.txHash.substring(0, 20)}...
-                        </a>
-                    ) : tx.txHash}
+                <div className="text-xs text-slate-600">
+                    <div className="mb-1 font-medium uppercase tracking-[0.16em] text-slate-500">Transaction</div>
+                    {tx.txHash.startsWith('at1') ? (
+                        <div className="flex items-center gap-2">
+                            <a
+                                href={`https://explorer.aleo.org/transaction/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="min-w-0 truncate font-mono text-[13px] text-[hsl(var(--primary))] hover:underline"
+                            >
+                                {tx.txHash}
+                            </a>
+                            <CopyInlineButton value={tx.txHash} title="Copy transaction hash" />
+                        </div>
+                    ) : (
+                        <CopyableText value={tx.txHash} />
+                    )}
                 </div>
             )}
 
             {tx.status === 'REJECTED' && tx.error && (
-                <div className="mt-2 text-xs text-red-300">{tx.error}</div>
+                <div className="mt-2 text-xs text-red-700">{tx.error}</div>
             )}
 
             {tx.status === 'REJECTED' && tx.canRetry && onRetry && (
-                <button onClick={handleRetry} disabled={retrying} className="mt-2 rounded-lg border border-red-500/30 bg-red-500/15 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-500/25 disabled:opacity-50">
+                <button onClick={handleRetry} disabled={retrying} className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-70">
                     {retrying ? 'Retrying...' : 'Retry'}
                 </button>
             )}
 
             {tx.status === 'EXPIRED' && onResume && (
-                <button onClick={handleResume} disabled={retrying} className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-50">
+                <button onClick={handleResume} disabled={retrying} className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-70">
                     {retrying ? 'Rebuilding...' : 'Resume'}
                 </button>
             )}
 
             {showHistory && history.length > 0 && (
-                <div className="mt-3 border-t border-white/5 pt-2 space-y-1">
+                <div className="mt-3 space-y-1 border-t border-slate-200 pt-3">
                     {history.map((entry, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs">
-                            <span className="text-[hsl(var(--muted-foreground))]">{entry.status}</span>
-                            <span className="text-[hsl(var(--muted-foreground))] font-mono">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                            <span className="text-slate-600">{entry.status}</span>
+                            <span className="font-mono text-slate-500">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                         </div>
                     ))}
                 </div>

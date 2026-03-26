@@ -8,6 +8,8 @@ import {
     escrowFundingTransition,
     estimateFee,
     FundEscrowSchema,
+    getAuctionState,
+    getBidStakeFromChain,
     getCurrentBlockHeight,
     getRfqChainState,
     getWinningAmountFromChain,
@@ -48,16 +50,16 @@ export async function handleSelectWinner(request: NextRequest, rfqId: string) {
             );
         }
 
-        const chain = await getRfqChainState(rfqId);
-        const currentBlock = await getCurrentBlockHeight();
-        if (chain.status !== RFQ_STATUS.REVEAL || (chain.revealDeadline && currentBlock < chain.revealDeadline)) {
-            return NextResponse.json(
-                { status: 'error', error: { code: 'INVALID_STATE', message: 'Winner selection is locked until the reveal window ends.' } },
-                { status: 400 },
-            );
-        }
-
         if (!data.txHash) {
+            const chain = await getRfqChainState(rfqId);
+            const currentBlock = await getCurrentBlockHeight();
+            if (chain.status !== RFQ_STATUS.REVEAL || (chain.revealDeadline && currentBlock < chain.revealDeadline)) {
+                return NextResponse.json(
+                    { status: 'error', error: { code: 'INVALID_STATE', message: 'Winner selection is locked until the reveal window ends.' } },
+                    { status: 400 },
+                );
+            }
+
             const idempotencyKey = `select_winner_${rfqId}_${crypto.randomUUID()}`;
             const canonicalKey = `select_winner:${rfqId}`;
             const tx: AleoTransaction = {
@@ -83,13 +85,20 @@ export async function handleSelectWinner(request: NextRequest, rfqId: string) {
             });
         }
 
+        const chainAfter = await getRfqChainState(rfqId);
+        const nextStatus =
+            chainAfter.statusCode !== 0 &&
+            (chainAfter.status === RFQ_STATUS.ESCROW_FUNDED || chainAfter.status === RFQ_STATUS.COMPLETED)
+                ? chainAfter.status
+                : RFQ_STATUS.WINNER_SELECTED;
+
         await prisma.$transaction([
             prisma.bid.updateMany({ where: { rfqId }, data: { isWinner: false } }),
             prisma.bid.update({ where: { id: bid.id }, data: { isWinner: true } }),
             prisma.rFQ.update({
                 where: { id: rfqId },
                 data: {
-                    status: RFQ_STATUS.WINNER_SELECTED,
+                    status: nextStatus,
                     auctionSource: null,
                     winnerAccepted: false,
                     paid: false,
@@ -118,34 +127,50 @@ export async function handleWinnerRespond(request: NextRequest, rfqId: string) {
 
     try {
         const data = WinnerRespondSchema.parse(await request.json());
-        const rfq = await prisma.rFQ.findUnique({ where: { id: rfqId } });
-        const winningBid = await prisma.bid.findFirst({ where: { rfqId, isWinner: true } });
-        const chain = await getRfqChainState(rfqId);
+        const [rfq, chain] = await Promise.all([
+            prisma.rFQ.findUnique({ where: { id: rfqId } }),
+            getRfqChainState(rfqId),
+        ]);
+        const winningBid = await prisma.bid.findFirst({
+            where: chain.winner ? { rfqId, vendor: chain.winner } : { rfqId, isWinner: true },
+        });
+        const onChainStake = winningBid ? await getBidStakeFromChain(rfqId, winningBid.id) : null;
         const chainImported = Boolean(chain.auctionSource) && chain.pricingMode !== PRICING_MODE.RFQ;
         // Detect imported-auction winner from either on-chain state OR the DB
         // bid record (which has stake=0 and commitmentHash matching auctionId).
         const dbImported = winningBid !== null && winningBid.stake === BigInt(0);
         const importedWinner = chainImported || dbImported;
-        const winnerAddress = winningBid?.vendor ?? (importedWinner ? chain.winner : null);
-        const responseStake = winningBid?.stake ?? (importedWinner ? BigInt(0) : null);
+        const winnerAddress = chain.winner ?? winningBid?.vendor ?? null;
+        const responseStake = importedWinner
+            ? BigInt(0)
+            : winningBid
+              ? (onChainStake !== null ? BigInt(onChainStake) : winningBid.stake)
+              : null;
 
-        if (!rfq || winnerAddress !== auth.walletAddress || responseStake === null) {
+        if (!rfq || winnerAddress !== auth.walletAddress || (!data.txHash && responseStake === null)) {
             return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the selected vendor can respond.' } }, { status: 403 });
-        }
-        if (importedWinner && responseStake === 0n && PROGRAM_IDS.rfq === 'sealrfq_v16.aleo') {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'UNSUPPORTED_ONCHAIN_STATE',
-                        message: 'Imported-auction winners on the deployed v16 RFQ cannot respond because the contract still attempts a zero-value stake transfer. Redeploy the RFQ fix under a new version before continuing.',
-                    },
-                },
-                { status: 409 },
-            );
         }
 
         if (!data.txHash) {
+            if (chain.status !== RFQ_STATUS.WINNER_SELECTED || chain.winnerAccepted) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Winner response is not currently available.' } }, { status: 400 });
+            }
+            if (importedWinner && responseStake === 0n && PROGRAM_IDS.rfq === 'sealrfq_v16.aleo') {
+                return NextResponse.json(
+                    {
+                        status: 'error',
+                        error: {
+                            code: 'UNSUPPORTED_ONCHAIN_STATE',
+                            message: 'Imported-auction winners on the deployed v16 RFQ cannot respond because the contract still attempts a zero-value stake transfer. Redeploy the RFQ fix under a new version before continuing.',
+                        },
+                    },
+                    { status: 409 },
+                );
+            }
+            if (!importedWinner && responseStake !== null && responseStake <= 0n) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Winner stake is no longer available for this response.' } }, { status: 400 });
+            }
+
             const idempotencyKey = `winner_respond_${rfqId}_${crypto.randomUUID()}`;
             const canonicalKey = canonicalActionKey('winner_respond', auth.walletAddress, rfqId, data.accept ? 'accept' : 'decline');
             const isImportedNoStake = importedWinner && responseStake === 0n;
@@ -169,10 +194,18 @@ export async function handleWinnerRespond(request: NextRequest, rfqId: string) {
             });
         }
 
+        const chainStatus = chain.statusCode !== 0 ? chain.status : rfq.status;
+        const nextStatus =
+            data.accept &&
+            (chainStatus === RFQ_STATUS.ESCROW_FUNDED || chainStatus === RFQ_STATUS.COMPLETED)
+                ? chainStatus
+                : data.accept
+                  ? RFQ_STATUS.WINNER_SELECTED
+                  : RFQ_STATUS.WINNER_DECLINED;
         await prisma.rFQ.update({
             where: { id: rfqId },
             data: {
-                status: data.accept ? RFQ_STATUS.WINNER_SELECTED : RFQ_STATUS.WINNER_DECLINED,
+                status: nextStatus,
                 winnerAccepted: data.accept,
             },
         });
@@ -190,15 +223,15 @@ export async function handleCancelRFQ(request: NextRequest, rfqId: string) {
     const rfq = await prisma.rFQ.findUnique({ where: { id: rfqId } });
     if (!rfq) return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'RFQ not found' } }, { status: 404 });
 
-    const resolved = await resolveCancelMode(rfqId, rfq.buyer, auth.walletAddress);
-    if (!resolved) {
-        return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'No cancel mode is currently available.' } }, { status: 400 });
-    }
-
     const body = await request.json().catch(() => ({}));
     const txHash = typeof body?.txHash === 'string' ? body.txHash : undefined;
 
     if (!txHash) {
+        const resolved = await resolveCancelMode(rfqId, rfq.buyer, auth.walletAddress);
+        if (!resolved) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'No cancel mode is currently available.' } }, { status: 400 });
+        }
+
         const idempotencyKey = `cancel_rfq_${rfqId}_${crypto.randomUUID()}`;
         const canonicalKey = `cancel_rfq_post_deadline:${rfqId}:${resolved.mode}`;
         const tx: AleoTransaction = {
@@ -213,7 +246,7 @@ export async function handleCancelRFQ(request: NextRequest, rfqId: string) {
     }
 
     await prisma.rFQ.update({ where: { id: rfqId }, data: { status: RFQ_STATUS.CANCELLED } });
-    return NextResponse.json({ status: 'success', data: { rfq_id: rfqId, mode: resolved.mode, txHash } });
+    return NextResponse.json({ status: 'success', data: { rfq_id: rfqId, txHash } });
 }
 
 export async function handleClaimStake(request: NextRequest, rfqId: string) {
@@ -223,16 +256,27 @@ export async function handleClaimStake(request: NextRequest, rfqId: string) {
     try {
         const data = StakeActionSchema.parse(await request.json());
         const bid = await prisma.bid.findUnique({ where: { id: data.bidId } });
-        const chain = await getRfqChainState(rfqId);
-        const currentBlock = await getCurrentBlockHeight();
+        const [chain, currentBlock, onChainStake] = await Promise.all([
+            getRfqChainState(rfqId),
+            getCurrentBlockHeight(),
+            getBidStakeFromChain(rfqId, data.bidId),
+        ]);
 
         if (!bid || bid.rfqId !== rfqId || bid.vendor !== auth.walletAddress) {
             return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the bidder can claim this stake.' } }, { status: 403 });
         }
 
+        const onChainExists = chain.statusCode !== 0;
+        const bidIsWinner = onChainExists ? chain.winner === bid.vendor : bid.isWinner;
+        const stake = onChainStake !== null ? BigInt(onChainStake) : (data.stake ?? bid.stake);
+
+        if (bid.isRefunded || bid.isSlashed || stake <= 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'This stake is no longer claimable.' } }, { status: 400 });
+        }
+
         const eligible =
             chain.status === RFQ_STATUS.CANCELLED ||
-            (!bid.isWinner &&
+            (!bidIsWinner &&
                 ((chain.status === RFQ_STATUS.REVEAL && chain.revealDeadline !== null && currentBlock > chain.revealDeadline + TIMING.SLASH_WINDOW) ||
                     chain.status === RFQ_STATUS.WINNER_SELECTED ||
                     chain.status === RFQ_STATUS.ESCROW_FUNDED ||
@@ -243,7 +287,6 @@ export async function handleClaimStake(request: NextRequest, rfqId: string) {
             return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Stake refund is not currently available.' } }, { status: 400 });
         }
 
-        const stake = data.stake ?? bid.stake;
         if (!data.txHash) {
             const idempotencyKey = `refund_any_stake_${data.bidId}_${crypto.randomUUID()}`;
             const canonicalKey = canonicalActionKey('refund_any_stake', auth.walletAddress, rfqId, data.bidId);
@@ -273,11 +316,18 @@ export async function handleSlashNonRevealer(request: NextRequest, rfqId: string
         const data = StakeActionSchema.parse(await request.json());
         const bid = await prisma.bid.findUnique({ where: { id: data.bidId } });
         const rfq = await prisma.rFQ.findUnique({ where: { id: rfqId } });
-        const chain = await getRfqChainState(rfqId);
-        const currentBlock = await getCurrentBlockHeight();
+        const [chain, currentBlock, onChainStake] = await Promise.all([
+            getRfqChainState(rfqId),
+            getCurrentBlockHeight(),
+            getBidStakeFromChain(rfqId, data.bidId),
+        ]);
 
         if (!bid || !rfq || bid.rfqId !== rfqId || rfq.buyer !== auth.walletAddress) {
             return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can slash non-revealers.' } }, { status: 403 });
+        }
+        const stake = onChainStake !== null ? BigInt(onChainStake) : (data.stake ?? bid.stake);
+        if (bid.isSlashed || bid.isRefunded || stake <= 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'This bid no longer has slashable stake.' } }, { status: 400 });
         }
         if (
             bid.isRevealed ||
@@ -289,7 +339,6 @@ export async function handleSlashNonRevealer(request: NextRequest, rfqId: string
             return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Slash window is not open for this bid.' } }, { status: 400 });
         }
 
-        const stake = data.stake ?? bid.stake;
         if (!data.txHash) {
             const idempotencyKey = `slash_non_revealer_${data.bidId}_${crypto.randomUUID()}`;
             const canonicalKey = canonicalActionKey('slash_non_revealer', auth.walletAddress, rfqId, data.bidId);
@@ -384,11 +433,24 @@ export async function handleImportAuctionResult(request: NextRequest, rfqId: str
         if (!rfq || rfq.buyer !== auth.walletAddress) {
             return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can import auction results.' } }, { status: 403 });
         }
+        const auctionKind = data.auctionType === PRICING_MODE.VICKREY ? 'vickrey' : 'dutch';
+        const auctionState = await getAuctionState(auctionKind, data.auctionId);
+        if (auctionState.statusCode === 0) {
+            return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Auction could not be found on chain.' } }, { status: 404 });
+        }
+        if (auctionState.rfqId !== rfqId) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'This auction is not linked to the selected RFQ.' } }, { status: 400 });
+        }
+        if (!auctionState.finalWinner || !auctionState.finalPrice) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Auction has not been finalized yet.' } }, { status: 400 });
+        }
+        if (auctionState.finalWinner !== data.winnerAddress || auctionState.finalPrice !== data.price.toString()) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Imported winner or price does not match the finalized auction result.' } }, { status: 400 });
+        }
 
         if (!data.txHash) {
             // Prepare path: validate on-chain state before returning tx request.
             const chain = await getRfqChainState(rfqId);
-            const currentBlock = await getCurrentBlockHeight();
 
             if (chain.pricingMode === PRICING_MODE.RFQ || chain.pricingMode !== data.auctionType) {
                 return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Auction import is not available for this RFQ.' } }, { status: 400 });
@@ -396,7 +458,9 @@ export async function handleImportAuctionResult(request: NextRequest, rfqId: str
             if (chain.status !== RFQ_STATUS.OPEN) {
                 return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Auction import is not available for this RFQ.' } }, { status: 400 });
             }
-            if (BigInt(chain.bidCount ?? '0') !== 0n || chain.auctionSource || (chain.revealDeadline && currentBlock > chain.revealDeadline)) {
+            // Allow importing finalized auction results even after the RFQ reveal deadline.
+            // For auction-backed RFQs, reveal timing is no longer a blocker once auction finality is proven.
+            if (BigInt(chain.bidCount ?? '0') !== 0n || chain.auctionSource) {
                 return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Auction result cannot be imported at this stage.' } }, { status: 400 });
             }
 

@@ -75,9 +75,9 @@ export default function DeadlineCountdown({
 
     if (currentBlock === null) {
         return (
-            <div className="flex items-center gap-2 text-sm text-[hsl(var(--muted-foreground))]">
-                <Clock className="w-4 h-4 animate-pulse" />
-                {error ? 'Unable to fetch block height' : 'Loading...'}
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-600">
+                <Clock className="h-4 w-4 animate-pulse" />
+                {error ? 'Unable to fetch block height' : 'Loading deadline...'}
             </div>
         );
     }
@@ -89,23 +89,34 @@ export default function DeadlineCountdown({
 
     if (isPassed) {
         return (
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/8 px-3 py-2 text-sm text-emerald-300">
-                <CheckCircle className="w-4 h-4 shrink-0" />
-                <span className="font-medium">{passedLabel}</span>
+            <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm text-emerald-800 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 shrink-0" />
+                    <span className="font-medium">{passedLabel}</span>
+                </div>
+                <span className="text-xs font-medium uppercase tracking-[0.16em] text-emerald-700">Reached</span>
             </div>
         );
     }
 
     return (
-        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+        <div className={`flex flex-col gap-2 rounded-xl border px-3.5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${
             isUrgent
-                ? 'border-amber-500/25 bg-amber-500/8 text-amber-300'
-                : 'border-[hsl(var(--border))] bg-[hsl(var(--secondary))] text-[hsl(var(--muted-foreground))]'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-slate-200 bg-slate-50 text-slate-700'
         }`}>
-            {isUrgent ? <AlertTriangle className="w-4 h-4 shrink-0 animate-pulse" /> : <Clock className="w-4 h-4 shrink-0" />}
-            <span>{label}</span>
-            <span className="font-mono font-semibold text-white">~{formatTimeRemaining(secondsRemaining)}</span>
-            <span className="text-xs opacity-60">({blocksRemaining} blocks)</span>
+            <div className="flex items-center gap-2">
+                {isUrgent ? <AlertTriangle className="h-4 w-4 shrink-0 animate-pulse" /> : <Clock className="h-4 w-4 shrink-0" />}
+                <span className="font-medium">{label}</span>
+            </div>
+            <div className="flex items-center gap-3">
+                <span className={`font-mono text-sm font-semibold ${isUrgent ? 'text-amber-900' : 'text-slate-950'}`}>
+                    ~{formatTimeRemaining(secondsRemaining)}
+                </span>
+                <span className={`text-xs font-medium ${isUrgent ? 'text-amber-700' : 'text-slate-500'}`}>
+                    {blocksRemaining} blocks
+                </span>
+            </div>
         </div>
     );
 }

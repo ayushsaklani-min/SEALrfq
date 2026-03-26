@@ -1,5 +1,7 @@
 import { authenticatedFetch } from './authFetch';
 import { ensureShieldProgramAccess } from './shieldWallet';
+import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
+import { Network } from '@provablehq/aleo-types';
 
 type TxRequest = {
     program: string;
@@ -13,6 +15,8 @@ const DEFAULT_NETWORK = process.env.NEXT_PUBLIC_ALEO_NETWORK || 'testnet';
 
 type ShieldLike = {
     executeTransaction?: (options: any) => Promise<{ transactionId?: string } | any>;
+    requestTransaction?: (options: any) => Promise<{ transactionId?: string } | any>;
+    requestRecords?: (programId: string, onlyUnspent?: boolean) => Promise<any[]>;
     transactionStatus?: (transactionId: string) => Promise<{ status?: string; error?: string } | any>;
 };
 
@@ -20,9 +24,160 @@ function getShield(): ShieldLike | null {
     const w = window as any;
     const candidates = [w.shield, w.shieldWallet, w.ShieldWallet, w.aleoWallet, w.aleo, w.leoWallet, w.puzzle];
     for (const candidate of candidates) {
-        if (candidate?.executeTransaction) return candidate as ShieldLike;
+        if (candidate?.executeTransaction || candidate?.requestTransaction) return candidate as ShieldLike;
     }
     return null;
+}
+
+function getMicrocredits(record: any): number {
+    try {
+        if (record?.data?.microcredits) {
+            return parseInt(String(record.data.microcredits).replace('u64', '').replace(/_/g, ''));
+        }
+        if (record?.plaintext) {
+            const m = String(record.plaintext).match(/microcredits:\s*([\d_]+)u64/);
+            if (m?.[1]) return parseInt(m[1].replace(/_/g, ''));
+        }
+        return 0;
+    } catch {
+        return 0;
+    }
+}
+
+/**
+ * Fetches an unspent credits.aleo record from Shield wallet and returns its plaintext.
+ * The plaintext is what Shield wallet accepts as a transaction input for credits.record.
+ */
+export async function requestCreditsRecord(requiredMicrocredits: number): Promise<string> {
+    const shield = getShield() as any;
+    if (!shield) throw new Error('Shield wallet not found');
+
+    // requestRecords is the standard method on the Shield wallet adapter
+    const requestFn = shield.requestRecords || shield.getRecords || shield.records;
+    if (!requestFn) {
+        throw new Error('Shield wallet does not support requestRecords. Update your Shield wallet extension.');
+    }
+
+    let records: any[] = [];
+    try {
+        records = await requestFn.call(shield, 'credits.aleo', false);
+    } catch (e: any) {
+        throw new Error(`Failed to fetch records from Shield wallet: ${e?.message || e}`);
+    }
+
+    console.log('[requestCreditsRecord] raw records from Shield:', JSON.stringify(records, null, 2));
+
+    if (!Array.isArray(records) || records.length === 0) {
+        throw new Error('No credits records found in Shield wallet. Make sure you have private credits (use transfer_public_to_private first).');
+    }
+
+    // Build plaintext string from a record, trying all known field layouts
+    function buildPlaintext(r: any): string | null {
+        // Prefer ready-made plaintext
+        if (r.plaintext && typeof r.plaintext === 'string' && r.plaintext.includes('microcredits')) {
+            return r.plaintext.trim();
+        }
+        // Construct from data fields
+        const owner = r.owner || r.data?.owner;
+        const nonce = r.nonce || r._nonce || r.data?._nonce || r.commitment;
+        const microcredits = getMicrocredits(r);
+        if (owner && nonce && microcredits > 0) {
+            const ownerStr = String(owner).includes('.private') ? owner : `${owner}.private`;
+            const nonceStr = String(nonce).includes('.public') ? nonce : `${nonce}.public`;
+            return `{ owner: ${ownerStr}, microcredits: ${microcredits}u64.private, _nonce: ${nonceStr} }`;
+        }
+        return null;
+    }
+
+    // Pass 1: find an unspent record with enough balance
+    for (const r of records) {
+        if (r.spent) continue;
+        const balance = getMicrocredits(r);
+        // If we can't parse balance, still try to use the record (let Shield validate)
+        if (balance > 0 && balance < requiredMicrocredits) continue;
+
+        const pt = buildPlaintext(r);
+        if (pt) {
+            console.log('[requestCreditsRecord] using record plaintext:', pt.slice(0, 80));
+            return pt;
+        }
+    }
+
+    // Pass 2: if balance parsing failed for all records, just use the first unspent record
+    // Shield wallet may have a different record structure — let it validate on execution
+    for (const r of records) {
+        if (r.spent) continue;
+        const pt = buildPlaintext(r);
+        if (pt) {
+            console.log('[requestCreditsRecord] fallback record (balance unknown):', pt.slice(0, 80));
+            return pt;
+        }
+        // Last resort: return ciphertext and hope Shield can handle it
+        const ciphertext = r.recordCiphertext || r.ciphertext;
+        if (ciphertext && typeof ciphertext === 'string') {
+            console.log('[requestCreditsRecord] falling back to ciphertext');
+            return ciphertext;
+        }
+    }
+
+    const totalBalance = records
+        .filter((r) => !r.spent)
+        .reduce((sum, r) => sum + getMicrocredits(r), 0);
+
+    throw new Error(
+        `No usable credits record found. ${totalBalance > 0 ? `Total unspent balance: ${totalBalance} microcredits.` : 'All records appear spent or unreadable.'} Check the browser console for raw record data.`
+    );
+}
+
+const PROGRAMS = [
+    process.env.NEXT_PUBLIC_ALEO_PROGRAM_ID || 'sealrfq_v18.aleo',
+    'credits.aleo',
+    'test_usdcx_stablecoin.aleo',
+    'test_usad_stablecoin.aleo',
+];
+
+let _shieldAdapter: InstanceType<typeof ShieldWalletAdapter> | null = null;
+
+/**
+ * Get (or create) a connected ShieldWalletAdapter instance.
+ * Uses the same adapter used in NullPay: connect with AutoDecrypt + programs list.
+ */
+async function getConnectedAdapter(): Promise<InstanceType<typeof ShieldWalletAdapter>> {
+    if (!_shieldAdapter) {
+        _shieldAdapter = new ShieldWalletAdapter({ appName: 'SealRFQ' });
+    }
+    // Always reconnect to ensure _publicKey is set — Shield doesn't show a popup if already approved
+    await (_shieldAdapter as any).connect(Network.TESTNET, 'AutoDecrypt', PROGRAMS);
+    return _shieldAdapter;
+}
+
+/**
+ * Execute a transaction via the Provable ShieldWalletAdapter.
+ * This is the NullPay pattern: proper private record handling through the official adapter.
+ */
+export async function executeWithAdapter(options: {
+    program: string;
+    function: string;
+    inputs: string[];
+    fee: number;
+}): Promise<{ transactionId: string }> {
+    const adapter = await getConnectedAdapter();
+    const result = await adapter.executeTransaction({
+        program: options.program,
+        function: options.function,
+        inputs: options.inputs,
+        fee: options.fee,
+        privateFee: false,
+    });
+    return result as { transactionId: string };
+}
+
+/**
+ * Fetch credits records from Shield via the official adapter (with proper decryption).
+ */
+export async function requestRecordsViaAdapter(programId: string): Promise<any[]> {
+    const adapter = await getConnectedAdapter();
+    return (adapter as any).requestRecords(programId, true) ?? [];
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -69,7 +224,7 @@ export async function executeWithShield(tx: TxRequest): Promise<{
     }
 
     const shield = getShield();
-    if (!shield?.executeTransaction) {
+    if (!shield?.executeTransaction && !shield?.requestTransaction) {
         throw new Error('Shield wallet executeTransaction API not available');
     }
 
@@ -94,7 +249,28 @@ export async function executeWithShield(tx: TxRequest): Promise<{
         fee,
         network,
     };
-    const payloads: any[] = [
+    // requestTransaction payloads — some Puzzle/Shield versions expose this method which
+    // properly handles private record inputs by letting the wallet auto-select from its cache.
+    const requestPayloads: any[] = [
+        {
+            address: (window as any).shield?.publicKey || (window as any).leoWallet?.publicKey || '',
+            chainId: network,
+            transitions: [{ program: common.program, functionName: tx.function, inputs: common.inputs }],
+            fee: common.fee,
+            feePrivate: false,
+        },
+        {
+            transitions: [{ program: common.program, functionName: tx.function, inputs: common.inputs }],
+            fee: common.fee,
+        },
+        {
+            transitions: [{ programId: common.program, functionName: tx.function, inputs: common.inputs }],
+            fee: common.fee,
+            feePrivate: false,
+        },
+    ];
+
+    const executePayloads: any[] = [
         {
             ...common,
             function: tx.function,
@@ -137,7 +313,22 @@ export async function executeWithShield(tx: TxRequest): Promise<{
     }
 
     const runAttempts = async (): Promise<'ok' | 'cancelled' | 'no_response' | 'failed'> => {
-        for (const payload of payloads) {
+        // Try requestTransaction first — it properly handles private record inputs via wallet UI
+        if (shield.requestTransaction) {
+            for (const payload of requestPayloads) {
+                try {
+                    result = await shield.requestTransaction(payload);
+                    if (result) return 'ok';
+                } catch (error) {
+                    lastError = error;
+                    const message = error instanceof Error ? error.message : String(error);
+                    if (isUserCancellation(message)) return 'cancelled';
+                    if (isNoResponse(message)) return 'no_response';
+                }
+            }
+        }
+        // Fall back to executeTransaction
+        for (const payload of executePayloads) {
             try {
                 result = await shield.executeTransaction?.(payload);
                 if (result) return 'ok';
@@ -257,6 +448,13 @@ export async function executeAndReportTx(
     });
 }
 
+function apiErrorMessage(payload: any, fallback: string): string {
+    if (payload?.error?.code === 'AUTH_ERROR') {
+        return 'This action needs a different workspace role. Switch to Buyer or Seller, then retry.';
+    }
+    return payload?.error?.message || fallback;
+}
+
 /**
  * Wallet-first transaction flow:
  * 1. Call backend to validate & get tx request (no business record created)
@@ -268,6 +466,7 @@ export async function walletFirstTx(
     url: string,
     prepareBody: object,
     confirmBodyBuilder: (prepareData: any, txHash: string) => object,
+    txRequestMutator?: (txRequest: TxRequest) => TxRequest,
 ): Promise<{ data: any; idempotencyKey: string; txHash: string }> {
     // 1. Prepare: validate and get tx request
     const prepareRes = await authenticatedFetch(url, {
@@ -277,10 +476,11 @@ export async function walletFirstTx(
     });
     const prepareJson = await prepareRes.json();
     if (!prepareRes.ok) {
-        throw new Error(prepareJson.error?.message || 'Request failed');
+        throw new Error(apiErrorMessage(prepareJson, 'Request failed'));
     }
 
-    const { idempotencyKey, request: txRequest } = prepareJson.data.tx;
+    const { idempotencyKey, request: rawTxRequest } = prepareJson.data.tx;
+    const txRequest: TxRequest = txRequestMutator ? txRequestMutator(rawTxRequest) : rawTxRequest;
 
     // 2. Execute wallet transaction
     let result: Awaited<ReturnType<typeof executeWithShield>>;
@@ -323,7 +523,22 @@ export async function walletFirstTx(
     });
     const confirmJson = await confirmRes.json();
     if (!confirmRes.ok) {
-        throw new Error(confirmJson.error?.message || 'Confirmation failed');
+        // Some flows can hit a post-confirmation race where on-chain state already advanced.
+        // Keep UI flow moving and let periodic refresh reconcile state.
+        if (confirmJson?.error?.code === 'INVALID_STATE' && result.status === 'confirmed') {
+            return {
+                data: {
+                    ...prepareJson.data,
+                    txHash: result.txHash,
+                    confirmDeferred: true,
+                    confirmError: confirmJson?.error?.message || null,
+                    confirmCode: 'INVALID_STATE',
+                },
+                idempotencyKey,
+                txHash: result.txHash,
+            };
+        }
+        throw new Error(apiErrorMessage(confirmJson, 'Confirmation failed'));
     }
 
     return {
