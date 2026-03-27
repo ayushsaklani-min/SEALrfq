@@ -60,8 +60,8 @@ export default function EscrowHubPage() {
                         </div>
                     </Panel>
 
-                    <Notice tone="neutral" title="Path B: credits invoice live">
-                        Private CREDITS invoice payment is available in the settlement workspace. USDCX and USAD invoice paths require compliance proofs and remain frozen.
+                    <Notice tone="neutral" title="Path B: private invoice available">
+                        Private invoice payment is available for ALEO credits, USDCx, and USAD. Open an escrow to settle privately via your Shield wallet.
                     </Notice>
                 </div>
             </div>

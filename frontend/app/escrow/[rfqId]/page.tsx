@@ -26,7 +26,7 @@ import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { calculateFee, formatAmount, netAfterFee, randomField, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
-import { executeWithAdapter, listShieldCreditsRecords, requestCreditsRecord, submitTrackedResult, type ShieldCreditsRecordSummary, walletFirstTx } from '@/lib/walletTx';
+import { executeWithAdapter, listShieldCreditsRecords, listShieldStablecoinRecords, requestCreditsRecord, requestStablecoinRecord, submitTrackedResult, type ShieldCreditsRecordSummary, type ShieldStablecoinRecordSummary, walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
 
 type EscrowView = {
@@ -83,7 +83,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     const [error, setError] = useState<string | null>(null);
     const [invoiceRecord, setInvoiceRecord] = useState('');
     const [receiptNonce] = useState(() => randomField());
-    const [walletRecords, setWalletRecords] = useState<ShieldCreditsRecordSummary[]>([]);
+    const [walletRecords, setWalletRecords] = useState<(ShieldCreditsRecordSummary | ShieldStablecoinRecordSummary)[]>([]);
     const [walletRecordsLoading, setWalletRecordsLoading] = useState(false);
     const [walletRecordsLoaded, setWalletRecordsLoaded] = useState(false);
     const [walletRecordsError, setWalletRecordsError] = useState<string | null>(null);
@@ -115,12 +115,24 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         };
     }, [params.rfqId]);
 
+    const stablecoinProgramId = escrow?.tokenType === TOKEN_TYPE.USDCX
+        ? 'test_usdcx_stablecoin.aleo'
+        : escrow?.tokenType === TOKEN_TYPE.USAD
+          ? 'test_usad_stablecoin.aleo'
+          : null;
+
     const loadWalletRecords = async () => {
-        if (!walletAddress || escrow?.tokenType !== TOKEN_TYPE.CREDITS) return;
+        if (!walletAddress || !escrow) return;
         setWalletRecordsLoading(true);
         setWalletRecordsError(null);
         try {
-            const records = await listShieldCreditsRecords();
+            let records: (ShieldCreditsRecordSummary | ShieldStablecoinRecordSummary)[];
+            if (escrow.tokenType === TOKEN_TYPE.CREDITS) {
+                records = await listShieldCreditsRecords();
+            } else {
+                const programId = stablecoinProgramId!;
+                records = await listShieldStablecoinRecords(programId);
+            }
             setWalletRecords(records);
             setWalletRecordsLoaded(true);
         } catch (caught: any) {
@@ -133,7 +145,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     };
 
     useEffect(() => {
-        if (!walletAddress || escrow?.tokenType !== TOKEN_TYPE.CREDITS) return;
+        if (!walletAddress || !escrow) return;
         void loadWalletRecords();
     }, [walletAddress, escrow?.tokenType]);
 
@@ -228,10 +240,17 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         setActing(true);
         setError(null);
         try {
-            // Step 1: get the exact credits record plaintext from Shield wallet
+            // Step 1: get the token record plaintext from Shield wallet
             let recordToUse = invoiceRecord.trim();
             if (!recordToUse) {
-                recordToUse = await requestCreditsRecord(escrow.winningAmount);
+                if (escrow.tokenType === TOKEN_TYPE.CREDITS) {
+                    recordToUse = await requestCreditsRecord(escrow.winningAmount);
+                } else {
+                    const programId = escrow.tokenType === TOKEN_TYPE.USDCX
+                        ? 'test_usdcx_stablecoin.aleo'
+                        : 'test_usad_stablecoin.aleo';
+                    recordToUse = await requestStablecoinRecord(programId, escrow.winningAmount);
+                }
             }
 
             // Step 2: get prepare data from backend (returns 5 inputs, record injected client-side)
@@ -333,7 +352,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         if (confirm.kind === 'payInvoice') return [
             { label: 'Action', value: 'Pay invoice privately (Path B)' },
             { label: 'Invoice amount', value: formatAmount(escrow.winningAmount, escrow.tokenType) },
-            { label: 'Path', value: 'Shield credits record → winner' },
+            { label: 'Path', value: 'Shield private record → winner' },
         ];
         if (confirm.kind === 'winnerClaim') return [
             { label: 'Action', value: 'Claim escrow as winner' },
@@ -378,20 +397,28 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     const isWinner = walletAddress && escrow.winner && walletAddress === escrow.winner;
     const releasedSoFar = BigInt(escrow.releasedAmount);
     const requiredPrivateAmount = BigInt(escrow.winningAmount);
+    // Normalize record balance field — credits use `microcredits`, stablecoins use `amount`
+    const getRecordBalance = (record: any): bigint | null =>
+        record.microcredits ?? record.amount ?? null;
+    const getRecordText = (record: any): string | null =>
+        record.plaintext ?? null;
+
     const unspentWalletRecords = walletRecords
         .filter((record) => !record.spent)
-        .sort((a, b) => Number((b.microcredits ?? -1n) - (a.microcredits ?? -1n)));
+        .sort((a, b) => Number((getRecordBalance(b) ?? -1n) - (getRecordBalance(a) ?? -1n)));
     const eligibleWalletRecords = unspentWalletRecords.filter(
-        (record) => record.microcredits !== null && record.microcredits >= requiredPrivateAmount
+        (record) => getRecordBalance(record) !== null && getRecordBalance(record)! >= requiredPrivateAmount
     );
     const hiddenIneligibleRecords = unspentWalletRecords.filter(
-        (record) => record.microcredits !== null && record.microcredits < requiredPrivateAmount
+        (record) => getRecordBalance(record) !== null && getRecordBalance(record)! < requiredPrivateAmount
     ).length;
-    const hiddenUnparsedRecords = unspentWalletRecords.filter((record) => record.microcredits === null).length;
-    const totalPrivateBalance = unspentWalletRecords.reduce((sum, record) => sum + (record.microcredits ?? 0n), 0n);
+    const hiddenUnparsedRecords = unspentWalletRecords.filter((record) => getRecordBalance(record) === null).length;
+    const totalPrivateBalance = unspentWalletRecords.reduce((sum, record) => sum + (getRecordBalance(record) ?? 0n), 0n);
     const largestPrivateRecord = unspentWalletRecords.reduce(
-        (largest, record) =>
-            record.microcredits !== null && record.microcredits > largest ? record.microcredits : largest,
+        (largest, record) => {
+            const bal = getRecordBalance(record);
+            return bal !== null && bal > largest ? bal : largest;
+        },
         0n
     );
     const settlementActionMode = escrow.paid
@@ -413,7 +440,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             ? latestInvoiceReceipt.payload.txHash
             : null;
     const hasReceiptArtifact = Boolean(savedReceiptHash || savedReceiptNonce || savedReceiptTxHash);
-    const pathBAvailable = escrow.tokenType === TOKEN_TYPE.CREDITS;
+    const pathBAvailable = true;
 
     return (
         <PageShell className="space-y-6">
@@ -522,7 +549,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         {settlementTab === 'pathB' && pathBAvailable && (
                             <div className="space-y-4">
                                 <div className="text-sm text-white/55">
-                                    Pay privately using a credits record from your Shield wallet. The escrow bond is not consumed — payment goes directly to the winner.
+                                    Pay privately using a token record from your Shield wallet. The escrow bond is not consumed — payment goes directly to the winner.
                                 </div>
                                 <Notice tone="warning" title="Save your receipt nonce">
                                     This nonce is generated once per page load. Copy and save it before submitting — you will need it to prove payment on-chain later.
@@ -538,11 +565,11 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                     <DataPoint label="Unspent records" value={unspentWalletRecords.length} />
                                     <DataPoint
                                         label="Largest record"
-                                        value={largestPrivateRecord > 0n ? formatAmount(largestPrivateRecord.toString(), TOKEN_TYPE.CREDITS) : '--'}
+                                        value={largestPrivateRecord > 0n ? formatAmount(largestPrivateRecord.toString(), escrow.tokenType) : '--'}
                                     />
                                     <DataPoint
                                         label="Total private balance"
-                                        value={totalPrivateBalance > 0n ? formatAmount(totalPrivateBalance.toString(), TOKEN_TYPE.CREDITS) : '--'}
+                                        value={totalPrivateBalance > 0n ? formatAmount(totalPrivateBalance.toString(), escrow.tokenType) : '--'}
                                         subtle={
                                             eligibleWalletRecords.length > 0
                                                 ? `${eligibleWalletRecords.length} record${eligibleWalletRecords.length === 1 ? '' : 's'} eligible`
@@ -566,7 +593,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                         <div className="mt-4"><Notice tone="danger">{walletRecordsError}</Notice></div>
                                     ) : null}
                                     {!walletRecordsLoading && walletRecordsLoaded && unspentWalletRecords.length === 0 ? (
-                                        <div className="mt-4 text-sm text-white/60">No unspent private credits records found in Shield for this wallet.</div>
+                                        <div className="mt-4 text-sm text-white/60">No unspent private records found in Shield for this wallet.</div>
                                     ) : null}
                                     {!walletRecordsLoading && walletRecordsLoaded && eligibleWalletRecords.length === 0 && unspentWalletRecords.length > 0 ? (
                                         <div className="mt-4 space-y-3">
@@ -581,7 +608,9 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                     {walletRecordsLoaded && eligibleWalletRecords.length > 0 ? (
                                         <div className="mt-4 space-y-2">
                                             {eligibleWalletRecords.map((record) => {
-                                                const isSelected = !!record.plaintext && invoiceRecord.trim() === record.plaintext.trim();
+                                                const pt = getRecordText(record);
+                                                const bal = getRecordBalance(record);
+                                                const isSelected = !!pt && invoiceRecord.trim() === pt.trim();
                                                 return (
                                                     <div
                                                         key={record.id}
@@ -592,8 +621,8 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                                         <div className="flex flex-wrap items-center justify-between gap-3">
                                                             <div className="space-y-0.5">
                                                                 <div className="text-sm font-medium text-white">
-                                                                    {record.microcredits !== null
-                                                                        ? formatAmount(record.microcredits.toString(), TOKEN_TYPE.CREDITS)
+                                                                    {bal !== null
+                                                                        ? formatAmount(bal.toString(), escrow.tokenType)
                                                                         : 'Unknown balance'}
                                                                 </div>
                                                                 <div className="text-xs text-white/55">Can cover this invoice</div>
@@ -601,8 +630,8 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                                             <Button
                                                                 variant={isSelected ? 'primary' : 'secondary'}
                                                                 size="sm"
-                                                                disabled={!record.plaintext}
-                                                                onClick={() => setInvoiceRecord(record.plaintext || '')}
+                                                                disabled={!pt}
+                                                                onClick={() => setInvoiceRecord(pt || '')}
                                                             >
                                                                 {isSelected ? 'Selected' : 'Use record'}
                                                             </Button>
@@ -632,18 +661,12 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                             ? 'Invoice already paid.'
                                             : escrow.settlementPathLocked === 'PARTIAL_RELEASES'
                                               ? 'Cannot use Path B after public releases.'
-                                              : 'Uses the Shield credits record plaintext.'}
+                                              : 'Uses a Shield private record for this token.'}
                                     </div>
                                 </ActionBar>
                             </div>
                         )}
 
-                        {/* Path B unavailable */}
-                        {settlementTab === 'pathB' && !pathBAvailable && (
-                            <Notice tone="neutral" title="USDCX / USAD invoice">
-                                Private invoice settlement for USDCX and USAD requires compliance MerkleProof records from the token issuer. Use Path A for now.
-                            </Notice>
-                        )}
                     </Panel>
                 </div>
 

@@ -144,18 +144,6 @@ export async function handleCreateVickreyAuction(request: NextRequest) {
 
     try {
         const data = CreateVickreySchema.parse(await request.json());
-        if (data.tokenType !== TOKEN_TYPE.CREDITS) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: 'The current Vickrey contract supports ALEO credits only.',
-                    },
-                },
-                { status: 400 },
-            );
-        }
         const auctionId = await deriveAuctionId(auth.walletAddress, data.salt);
         if (data.auctionId && data.auctionId !== auctionId) {
             return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: 'Supplied auction id does not match the v2 derived id for this wallet and salt.' } }, { status: 400 });
@@ -373,18 +361,6 @@ export async function handleCreateDutchAuction(request: NextRequest) {
 
     try {
         const data = CreateDutchSchema.parse(await request.json());
-        if (data.tokenType !== TOKEN_TYPE.CREDITS) {
-            return NextResponse.json(
-                {
-                    status: 'error',
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: 'The current Dutch auction contract supports ALEO credits only.',
-                    },
-                },
-                { status: 400 },
-            );
-        }
         const auctionId = await deriveAuctionId(auth.walletAddress, data.salt);
         if (data.auctionId && data.auctionId !== auctionId) {
             return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: 'Supplied auction id does not match the v2 derived id for this wallet and salt.' } }, { status: 400 });

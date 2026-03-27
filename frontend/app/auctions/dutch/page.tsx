@@ -237,9 +237,11 @@ export default function DutchAuctionsPage() {
                             <TextInput value={rfqId} onChange={(event) => setRfqId(event.target.value)} placeholder="123field" />
                         </Field>
 
-                        <Field label="Settlement token" hint="Current Dutch contract support is limited to ALEO credits.">
-                            <SelectInput value={tokenType} onChange={(event) => setTokenType(event.target.value)} disabled={true}>
+                        <Field label="Settlement token">
+                            <SelectInput value={tokenType} onChange={(event) => setTokenType(event.target.value)}>
                                 <option value={TOKEN_TYPE.CREDITS}>ALEO credits</option>
+                                <option value={TOKEN_TYPE.USDCX}>USDCx</option>
+                                <option value={TOKEN_TYPE.USAD}>USAD</option>
                             </SelectInput>
                         </Field>
 

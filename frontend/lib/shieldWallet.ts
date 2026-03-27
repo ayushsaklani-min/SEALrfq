@@ -314,7 +314,7 @@ async function connectKnownProvider(provider: WalletProvider | null, allowlist =
 export async function getShieldWalletAddress(): Promise<string> {
     const errors: string[] = [];
 
-    // Preferred path: native Shield API, matches working reference project adapter.
+    // Preferred path: native Shield API.
     const nativeShield = getNativeShield();
     if (nativeShield) {
         try {
