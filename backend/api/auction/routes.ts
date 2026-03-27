@@ -159,6 +159,7 @@ export async function handleCreateVickreyAuction(request: NextRequest) {
                     `${data.biddingDeadline}u32`,
                     `${data.revealDeadline}u32`,
                     `${data.minBid}u64`,
+                    `${data.tokenType}u8`,
                 ],
                 fee: estimateFee('create_auction'),
             };
@@ -378,6 +379,7 @@ export async function handleCreateDutchAuction(request: NextRequest) {
                     `${data.decrementPerBlock}u64`,
                     `${data.startBlock}u32`,
                     `${data.endBlock}u32`,
+                    `${data.tokenType}u8`,
                 ],
                 fee: estimateFee('create_auction'),
             };

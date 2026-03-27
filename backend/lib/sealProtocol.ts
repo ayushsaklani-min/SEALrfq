@@ -20,8 +20,8 @@ export const PROGRAM_IDS = {
     credits: 'credits.aleo',
     usdcx: 'test_usdcx_stablecoin.aleo',
     usad: 'test_usad_stablecoin.aleo',
-    vickrey: process.env.ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v2.aleo',
-    dutch: process.env.ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v4.aleo',
+    vickrey: process.env.ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v8.aleo',
+    dutch: process.env.ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v8.aleo',
 } as const;
 
 export const TOKEN_TYPE = {
@@ -411,6 +411,7 @@ export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: stri
                   ['auction_second_lowest_bid', auctionId],
                   ['auction_final_winner', auctionId],
                   ['auction_final_price', auctionId],
+                  ['auction_token_type', auctionId],
               ]
             : [
                   ['auction_status', auctionId],
@@ -424,6 +425,7 @@ export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: stri
                   ['auction_final_winner', auctionId],
                   ['auction_final_price', auctionId],
                   ['first_commit_block', auctionId],
+                  ['auction_token_type', auctionId],
               ];
 
     const values = await Promise.all(
@@ -441,9 +443,8 @@ export async function getAuctionState(kind: 'vickrey' | 'dutch', auctionId: stri
         statusCode: parseInteger(mapped.auction_status) ?? 0,
         creator: parseAddress(mapped.auction_creators),
         rfqId: parseField(mapped.auction_rfq_id),
-        // Both current auction contracts (sealvickrey_v2, sealdutch_v4) only support ALEO credits.
-        tokenType: TOKEN_TYPE.CREDITS,
-        tokenSymbol: tokenSymbol(TOKEN_TYPE.CREDITS),
+        tokenType: parseInteger(mapped.auction_token_type) ?? TOKEN_TYPE.CREDITS,
+        tokenSymbol: tokenSymbol(parseInteger(mapped.auction_token_type) ?? TOKEN_TYPE.CREDITS),
         bidCount: parseBigintString(mapped.auction_bid_count),
         revealedCount: parseBigintString(mapped.auction_revealed_count),
         flatStake: parseBigintString(mapped.auction_flat_stake),

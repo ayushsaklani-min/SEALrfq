@@ -3,8 +3,8 @@ import { z } from 'zod';
 export const PROGRAM_IDS = {
     rfq: process.env.NEXT_PUBLIC_ALEO_PROGRAM_ID || 'sealrfq_v18.aleo',
     invoice: process.env.NEXT_PUBLIC_ALEO_INVOICE_PROGRAM_ID || 'sealrfq_invoice_v1.aleo',
-    vickrey: process.env.NEXT_PUBLIC_ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v2.aleo',
-    dutch: process.env.NEXT_PUBLIC_ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v4.aleo',
+    vickrey: process.env.NEXT_PUBLIC_ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v8.aleo',
+    dutch: process.env.NEXT_PUBLIC_ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v8.aleo',
     credits: 'credits.aleo',
     usdcx: 'test_usdcx_stablecoin.aleo',
     usad: 'test_usad_stablecoin.aleo',

@@ -1,0 +1,10 @@
+{
+    "program": "sealdutch_v8.aleo",
+    "version": "1.0.0",
+    "description": "Sealed Dutch Auction v8 - multi-token support (CREDITS, USDCx, USAD)",
+    "license": "MIT",
+    "leo": "3.5.0",
+    "dependencies": [
+        { "name": "credits.aleo", "location": "network" }
+    ]
+}
