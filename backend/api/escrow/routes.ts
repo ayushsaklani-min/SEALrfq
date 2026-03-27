@@ -33,7 +33,7 @@ const ReleasePartialSchema = z.object({
 });
 
 const InvoiceSchema = z.object({
-    paymentRecord: z.string().min(1),
+    paymentRecord: z.string().min(1).optional(),
     receiptNonce: z.string().regex(/^\d+field$/),
     proofA: z.string().optional(),
     proofB: z.string().optional(),
@@ -184,6 +184,7 @@ export async function handleGetEscrow(request: NextRequest, rfqId: string) {
             winner: state.chain.winner,
             creator: state.chain.creator ?? state.rfq.buyer,
             paid: state.chain.paid,
+            receiptHash: state.chain.receiptHash,
             feeBps: feeBpsForToken(state.chain.escrowToken, state.platform.feeBps),
             settlementPathLocked:
                 state.chain.paid ? 'PRIVATE_PAYMENT' : state.releasedAmount > 0n ? 'PARTIAL_RELEASES' : null,
@@ -405,10 +406,6 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
             const userNonce = await nextActionNonce(auth.walletAddress, rfqId, transition.actionTag);
             const idempotencyKey = `pay_invoice_${rfqId}_${crypto.randomUUID()}`;
             const canonicalKey = canonicalActionKey(`nonce:${transition.actionTag}`, auth.walletAddress, rfqId, 'invoice');
-            const proofInput =
-                state.chain.escrowToken === TOKEN_TYPE.CREDITS
-                    ? []
-                    : [`[${data.proofA ?? 'proof_a'}, ${data.proofB ?? 'proof_b'}]`];
             const tx: AleoTransaction = {
                 program: transition.program,
                 function: transition.fn,
@@ -418,9 +415,8 @@ export async function handlePayInvoice(request: NextRequest, rfqId: string) {
                     `${amount}u64`,
                     `${userNonce}u64`,
                     data.receiptNonce,
-                    // paymentRecord is injected client-side as a plaintext record object
-                    // via the wallet adapter — not sent through the backend.
-                    ...proofInput,
+                    // paymentRecord (pos 5) and MerkleProofs (pos 6, stablecoin only) are injected
+                    // client-side by the frontend using Shield wallet records.
                 ],
                 fee: estimateFee(transition.fn),
             };

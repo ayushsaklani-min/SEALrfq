@@ -26,7 +26,7 @@ import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { calculateFee, formatAmount, netAfterFee, randomField, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
-import { executeWithAdapter, listShieldCreditsRecords, listShieldStablecoinRecords, requestCreditsRecord, requestStablecoinRecord, submitTrackedResult, type ShieldCreditsRecordSummary, type ShieldStablecoinRecordSummary, walletFirstTx } from '@/lib/walletTx';
+import { executeWithAdapter, listShieldCreditsRecords, listShieldStablecoinRecords, requestCreditsRecord, requestStablecoinRecord, requestStablecoinRecordWithProofs, submitTrackedResult, type ShieldCreditsRecordSummary, type ShieldStablecoinRecordSummary, walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
 
 type EscrowView = {
@@ -240,8 +240,10 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         setActing(true);
         setError(null);
         try {
-            // Step 1: get the token record plaintext from Shield wallet
+            // Step 1: get the token record (and MerkleProofs for stablecoins) from Shield wallet
             let recordToUse = invoiceRecord.trim();
+            let stablecoinProofA: string | null = null;
+            let stablecoinProofB: string | null = null;
             if (!recordToUse) {
                 if (escrow.tokenType === TOKEN_TYPE.CREDITS) {
                     recordToUse = await requestCreditsRecord(escrow.winningAmount);
@@ -249,11 +251,14 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                     const programId = escrow.tokenType === TOKEN_TYPE.USDCX
                         ? 'test_usdcx_stablecoin.aleo'
                         : 'test_usad_stablecoin.aleo';
-                    recordToUse = await requestStablecoinRecord(programId, escrow.winningAmount);
+                    const { token, proofA, proofB } = await requestStablecoinRecordWithProofs(programId, escrow.winningAmount);
+                    recordToUse = token;
+                    stablecoinProofA = proofA;
+                    stablecoinProofB = proofB;
                 }
             }
 
-            // Step 2: get prepare data from backend (returns 5 inputs, record injected client-side)
+            // Step 2: get prepare data from backend (returns 5 public inputs; record + proofs injected client-side)
             const { authenticatedFetch } = await import('@/lib/authFetch');
             const prepareRes = await authenticatedFetch(
                 `/api/escrow/${encodeURIComponent(escrow.rfqId)}/pay-invoice`,
@@ -268,9 +273,12 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
 
             const { idempotencyKey, request: txRequest } = prepareJson.data.tx;
 
-            // Step 3: inject record as input[5] (credits.record position in pay_invoice)
+            // Step 3: inject record at input[5], then proofs at input[6] for stablecoins
             const inputs = [...txRequest.inputs];
             inputs.splice(5, 0, recordToUse);
+            if (stablecoinProofA && stablecoinProofB) {
+                inputs.splice(6, 0, `[${stablecoinProofA}, ${stablecoinProofB}]`);
+            }
 
             // Step 4: execute via ShieldWalletAdapter directly with the wallet-provided record plaintext
             let txResult: any;

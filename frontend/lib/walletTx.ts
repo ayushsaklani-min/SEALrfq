@@ -169,6 +169,70 @@ export async function requestStablecoinRecord(programId: string, requiredAmount:
     throw new Error(`No ${programId} record with sufficient balance found in Shield wallet.`);
 }
 
+/**
+ * Fetch both the Token record AND two MerkleProof records for a compliance stablecoin payment.
+ * MerkleProof records are compliance inclusion proofs stored alongside Token records in Shield.
+ * They are identified by NOT having an `amount` field (Token records always have amount/microcredits).
+ */
+export async function requestStablecoinRecordWithProofs(
+    programId: string,
+    requiredAmount: bigint | number | string,
+): Promise<{ token: string; proofA: string; proofB: string }> {
+    const required = BigInt(requiredAmount);
+    let records: any[] = [];
+    try {
+        records = await requestRecordsViaAdapter(programId);
+    } catch (e: any) {
+        const shield = getShield() as any;
+        if (!shield) throw new Error('Shield wallet not found');
+        const requestFn = shield.requestRecords || shield.getRecords || shield.records;
+        if (!requestFn) throw new Error('Shield wallet does not support requestRecords.');
+        try {
+            records = await requestFn.call(shield, programId, true);
+        } catch (fallbackError: any) {
+            throw new Error(`Failed to fetch ${programId} records: ${fallbackError?.message || e?.message}`);
+        }
+    }
+
+    if (!Array.isArray(records) || records.length === 0) {
+        throw new Error(`No ${programId} records found in Shield wallet.`);
+    }
+
+    const unspent = records.filter((r) => !r?.spent);
+
+    // Separate Token records (have amount field) from MerkleProof records (no amount field)
+    let tokenRecord: string | null = null;
+    const proofRecords: string[] = [];
+
+    for (const record of unspent) {
+        const plaintext = getStablecoinPlaintext(record, programId);
+        if (!plaintext) continue;
+        const isToken = /(?:amount|microcredits|balance)\s*:/.test(plaintext);
+        if (isToken) {
+            if (tokenRecord === null) {
+                const balance = getStablecoinAmount(record);
+                if (balance === null || balance >= required) {
+                    tokenRecord = plaintext;
+                }
+            }
+        } else {
+            proofRecords.push(plaintext);
+        }
+    }
+
+    if (!tokenRecord) {
+        throw new Error(`No ${programId} Token record with sufficient balance found in Shield wallet.`);
+    }
+    if (proofRecords.length < 2) {
+        throw new Error(
+            `Shield wallet does not have enough MerkleProof records for ${programId}. ` +
+            `Found ${proofRecords.length}, need 2. Make sure you have obtained compliance proofs from Shield.`
+        );
+    }
+
+    return { token: tokenRecord, proofA: proofRecords[0], proofB: proofRecords[1] };
+}
+
 function getStablecoinPlaintext(record: any, programId: string): string | null {
     const candidates = [record?.plaintext, record?.recordPlaintext, record?.data?.plaintext];
     for (const c of candidates) {
