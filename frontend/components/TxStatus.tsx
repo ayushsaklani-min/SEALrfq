@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { CopyInlineButton, CopyableText } from '@/components/protocol/ProtocolPrimitives';
+import { useEffect, useRef, useState } from 'react';
+import { CopyInlineButton } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { CheckCircle, Clock, XCircle, AlertTriangle } from 'lucide-react';
 
@@ -35,6 +35,8 @@ interface TxStatusProps {
     canonicalTxKey?: string;
     onRetry?: () => Promise<void>;
     onResume?: () => Promise<void>;
+    /** Called once when status first reaches CONFIRMED */
+    onConfirmed?: () => void;
     showHistory?: boolean;
     compact?: boolean;
 }
@@ -43,6 +45,7 @@ export function TxStatusView({
     idempotencyKey,
     onRetry,
     onResume,
+    onConfirmed,
     showHistory = false,
     compact = false,
 }: TxStatusProps) {
@@ -50,6 +53,10 @@ export function TxStatusView({
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [retrying, setRetrying] = useState(false);
+    const firedRef = useRef(false);
+
+    // Reset fired flag when key changes
+    useEffect(() => { firedRef.current = false; }, [idempotencyKey]);
 
     useEffect(() => {
         let intervalId: NodeJS.Timeout | null = null;
@@ -63,6 +70,10 @@ export function TxStatusView({
                 setLoading(false);
                 if (['CONFIRMED', 'REJECTED', 'EXPIRED'].includes(payload.data.status)) {
                     if (intervalId) clearInterval(intervalId);
+                    if (payload.data.status === 'CONFIRMED' && onConfirmed && !firedRef.current) {
+                        firedRef.current = true;
+                        onConfirmed();
+                    }
                 }
             } catch (err: any) {
                 setError(err.message);
@@ -89,92 +100,86 @@ export function TxStatusView({
     };
 
     if (loading) {
-        return <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-3 text-sm text-[hsl(var(--muted-foreground))]">Loading transaction status...</div>;
+        return (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/50">
+                Fetching transaction status…
+            </div>
+        );
     }
 
     if (error || !tx) {
-        return <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error || 'Transaction not found'}</div>;
+        return (
+            <div className="rounded-xl border border-red-400/25 bg-red-400/[0.07] p-3 text-sm text-red-300">
+                {error || 'Transaction not found'}
+            </div>
+        );
     }
 
     const history: Array<{ status: TxStatus; timestamp: string }> = Array.isArray(tx.statusHistory)
         ? tx.statusHistory
         : (() => { try { return JSON.parse(tx.statusHistory || '[]'); } catch { return []; } })();
 
-    const statusIcon = {
-        PREPARED: <Clock className="h-4 w-4 text-slate-500" />,
-        SUBMITTED: <Clock className="h-4 w-4 animate-pulse text-blue-500" />,
-        CONFIRMED: <CheckCircle className="h-4 w-4 text-emerald-500" />,
-        REJECTED: <XCircle className="h-4 w-4 text-red-500" />,
-        EXPIRED: <AlertTriangle className="h-4 w-4 text-amber-500" />,
+    const meta: Record<TxStatus, { icon: React.ReactNode; label: string; border: string; bg: string; textColor: string }> = {
+        PREPARED:  { icon: <Clock className="h-4 w-4 text-white/40" />,            label: 'Preparing',           border: 'border-white/10',        bg: 'bg-white/[0.04]',        textColor: 'text-white/70' },
+        SUBMITTED: { icon: <Clock className="h-4 w-4 animate-pulse text-blue-400" />, label: 'Processing on-chain…', border: 'border-blue-400/25',     bg: 'bg-blue-400/[0.07]',     textColor: 'text-blue-200' },
+        CONFIRMED: { icon: <CheckCircle className="h-4 w-4 text-emerald-400" />,   label: 'Confirmed',           border: 'border-emerald-400/25',  bg: 'bg-emerald-400/[0.07]',  textColor: 'text-emerald-200' },
+        REJECTED:  { icon: <XCircle className="h-4 w-4 text-red-400" />,           label: 'Failed',              border: 'border-red-400/25',      bg: 'bg-red-400/[0.07]',      textColor: 'text-red-200' },
+        EXPIRED:   { icon: <AlertTriangle className="h-4 w-4 text-amber-400" />,   label: 'Expired',             border: 'border-amber-400/25',    bg: 'bg-amber-400/[0.07]',    textColor: 'text-amber-200' },
     };
 
-    const statusLabel = {
-        PREPARED: 'Preparing',
-        SUBMITTED: 'Processing',
-        CONFIRMED: 'Confirmed',
-        REJECTED: 'Failed',
-        EXPIRED: 'Expired',
-    };
-
-    const statusBg = {
-        PREPARED: 'border-slate-200 bg-slate-50',
-        SUBMITTED: 'border-blue-200 bg-blue-50',
-        CONFIRMED: 'border-emerald-200 bg-emerald-50',
-        REJECTED: 'border-red-200 bg-red-50',
-        EXPIRED: 'border-amber-200 bg-amber-50',
-    };
+    const { icon, label, border, bg, textColor } = meta[tx.status];
 
     return (
-        <div className={`rounded-2xl border ${statusBg[tx.status]} ${compact ? 'p-3' : 'p-4'}`}>
-            <div className="mb-2 flex items-center gap-2">
-                {statusIcon[tx.status]}
-                <span className="text-sm font-semibold text-slate-950">{statusLabel[tx.status]}</span>
-                <span className="text-xs text-slate-500">{tx.transition}</span>
+        <div className={`rounded-xl border ${border} ${bg} ${compact ? 'p-3' : 'p-4'}`}>
+            <div className="flex items-center gap-2">
+                {icon}
+                <span className={`text-sm font-semibold ${textColor}`}>{label}</span>
+                <span className="ml-auto font-mono text-xs text-white/30">{tx.transition}</span>
             </div>
 
             {tx.txHash && (
-                <div className="text-xs text-slate-600">
-                    <div className="mb-1 font-medium uppercase tracking-[0.16em] text-slate-500">Transaction</div>
-                    {tx.txHash.startsWith('at1') ? (
-                        <div className="flex items-center gap-2">
+                <div className="mt-3">
+                    <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/30">Transaction</div>
+                    <div className="flex items-center gap-2">
+                        {tx.txHash.startsWith('at1') ? (
                             <a
                                 href={`https://explorer.aleo.org/transaction/${tx.txHash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="min-w-0 truncate font-mono text-[13px] text-[hsl(var(--primary))] hover:underline"
+                                className="min-w-0 truncate font-mono text-xs text-blue-300 hover:underline"
                             >
                                 {tx.txHash}
                             </a>
-                            <CopyInlineButton value={tx.txHash} title="Copy transaction hash" />
-                        </div>
-                    ) : (
-                        <CopyableText value={tx.txHash} />
-                    )}
+                        ) : (
+                            <span className="min-w-0 truncate font-mono text-xs text-white/45">{tx.txHash}</span>
+                        )}
+                        <CopyInlineButton value={tx.txHash} title="Copy transaction hash" />
+                    </div>
                 </div>
             )}
 
             {tx.status === 'REJECTED' && tx.error && (
-                <div className="mt-2 text-xs text-red-700">{tx.error}</div>
+                <div className="mt-2 text-xs text-red-300/80">{tx.error}</div>
             )}
 
             {tx.status === 'REJECTED' && tx.canRetry && onRetry && (
-                <button onClick={handleRetry} disabled={retrying} className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-70">
-                    {retrying ? 'Retrying...' : 'Retry'}
+                <button onClick={handleRetry} disabled={retrying} className="mt-3 rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-1.5 text-xs font-medium text-red-300 transition hover:bg-red-400/20 disabled:opacity-50">
+                    {retrying ? 'Retrying…' : 'Retry'}
                 </button>
             )}
 
             {tx.status === 'EXPIRED' && onResume && (
-                <button onClick={handleResume} disabled={retrying} className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-70">
-                    {retrying ? 'Rebuilding...' : 'Resume'}
+                <button onClick={handleResume} disabled={retrying} className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-400/20 disabled:opacity-50">
+                    {retrying ? 'Rebuilding…' : 'Resume'}
                 </button>
             )}
 
             {showHistory && history.length > 0 && (
-                <div className="mt-3 space-y-1 border-t border-slate-200 pt-3">
+                <div className="mt-3 space-y-1 border-t border-white/8 pt-3">
                     {history.map((entry, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs">
-                            <span className="text-slate-600">{entry.status}</span>
-                            <span className="font-mono text-slate-500">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                            <span className="text-white/50">{entry.status}</span>
+                            <span className="font-mono text-white/30">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                         </div>
                     ))}
                 </div>

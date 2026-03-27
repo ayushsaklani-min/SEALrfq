@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import DeadlineCountdown from '@/components/DeadlineCountdown';
 import { TxStatusView } from '@/components/TxStatus';
+import { ConfirmModal, type ConfirmDetail } from '@/components/ConfirmModal';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
@@ -20,6 +21,7 @@ import {
     StatusChip,
     TokenChip,
 } from '@/components/protocol/ProtocolPrimitives';
+import { useToast } from '@/components/Toast';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { formatAmount, PRICING_MODE, TIMING } from '@/lib/sealProtocol';
@@ -87,9 +89,17 @@ function canClaimStake(bid: VendorBid, currentBlock: number | null) {
     return false;
 }
 
+// ── UI-only state for confirmation modal ──────────────────────────────────────
+type PendingConfirm =
+    | { kind: 'accept';  bid: VendorBid }
+    | { kind: 'decline'; bid: VendorBid }
+    | { kind: 'claim';   bid: VendorBid };
+
 export default function VendorMyBidsPage() {
     const records = useProtocolStore((state) => state.records);
     const winnerCertificate = useProtocolStore((state) => state.winnerCertificate);
+    const toast = useToast();
+
     const [bids, setBids] = useState<VendorBid[]>([]);
     const [openRfqs, setOpenRfqs] = useState<OpenRfq[]>([]);
     const [currentBlock, setCurrentBlock] = useState<number | null>(null);
@@ -99,6 +109,10 @@ export default function VendorMyBidsPage() {
     const [error, setError] = useState<string | null>(null);
     const [acting, setActing] = useState(false);
 
+    // UI-only modal state — does NOT affect any existing logic
+    const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
+
+    // ── Data fetching — unchanged ─────────────────────────────────────────────
     useEffect(() => {
         let cancelled = false;
         const load = async () => {
@@ -128,12 +142,10 @@ export default function VendorMyBidsPage() {
 
         load();
         const intervalId = window.setInterval(load, 15000);
-        return () => {
-            cancelled = true;
-            window.clearInterval(intervalId);
-        };
+        return () => { cancelled = true; window.clearInterval(intervalId); };
     }, []);
 
+    // ── Action functions — logic unchanged, only added toast.error ────────────
     const respondToAward = async (bid: VendorBid, accept: boolean) => {
         setActing(true);
         setError(null);
@@ -145,7 +157,9 @@ export default function VendorMyBidsPage() {
             );
             setTxKey(result.idempotencyKey);
         } catch (caught: any) {
-            setError(caught?.message || 'Failed to submit winner response.');
+            const msg = caught?.message || 'Failed to submit winner response.';
+            setError(msg);
+            toast.error(msg);
         } finally {
             setActing(false);
         }
@@ -162,7 +176,9 @@ export default function VendorMyBidsPage() {
             );
             setTxKey(result.idempotencyKey);
         } catch (caught: any) {
-            setError(caught?.message || 'Failed to claim stake.');
+            const msg = caught?.message || 'Failed to claim stake.';
+            setError(msg);
+            toast.error(msg);
         } finally {
             setActing(false);
         }
@@ -177,16 +193,45 @@ export default function VendorMyBidsPage() {
             setProofMessage(`Local proof check succeeded for RFQ ${bid.rfqId}.`);
             return;
         }
-
         setProofMessage('No local WinnerCertificate is cached for this RFQ yet.');
     };
 
+    // ── Confirm modal handler — just dispatches to existing functions ─────────
+    const handleConfirm = () => {
+        if (!confirm) return;
+        setConfirm(null);
+        if (confirm.kind === 'accept')  respondToAward(confirm.bid, true);
+        if (confirm.kind === 'decline') respondToAward(confirm.bid, false);
+        if (confirm.kind === 'claim')   claimStake(confirm.bid);
+    };
+
+    // ── Derived counts — unchanged ────────────────────────────────────────────
     const wonCount = useMemo(() => bids.filter((bid) => bid.isWinner).length, [bids]);
     const revealCount = useMemo(
         () => bids.filter((bid) => !bid.isRevealed && revealOpen(bid.biddingDeadline, bid.revealDeadline, currentBlock)).length,
         [bids, currentBlock],
     );
     const refundCount = useMemo(() => bids.filter((bid) => canClaimStake(bid, currentBlock)).length, [bids, currentBlock]);
+
+    // ── Confirm modal details ─────────────────────────────────────────────────
+    const confirmDetails: ConfirmDetail[] = confirm
+        ? confirm.kind === 'accept'
+            ? [
+                { label: 'Action',         value: 'Accept award' },
+                { label: 'RFQ',            value: truncateMiddle(confirm.bid.rfqId, 14, 8) },
+                { label: 'Stake returned', value: formatAmount(confirm.bid.stake, 0) },
+              ]
+            : confirm.kind === 'decline'
+            ? [
+                { label: 'Action', value: 'Decline award' },
+                { label: 'RFQ',    value: truncateMiddle(confirm.bid.rfqId, 14, 8) },
+              ]
+            : [
+                { label: 'Action', value: 'Claim stake' },
+                { label: 'RFQ',    value: truncateMiddle(confirm.bid.rfqId, 14, 8) },
+                { label: 'Amount', value: formatAmount(confirm.bid.stake, 0) },
+              ]
+        : [];
 
     if (loading) {
         return (
@@ -200,6 +245,26 @@ export default function VendorMyBidsPage() {
 
     return (
         <PageShell className="space-y-6">
+            {/* Confirm modal — pure UI overlay, does not touch any logic */}
+            <ConfirmModal
+                open={!!confirm}
+                title={
+                    confirm?.kind === 'accept'  ? 'Accept award'  :
+                    confirm?.kind === 'decline' ? 'Decline award' : 'Claim stake'
+                }
+                description={
+                    confirm?.kind === 'accept'  ? 'Your stake will be returned immediately on-chain.' :
+                    confirm?.kind === 'decline' ? 'The buyer will need to re-select a winner.' :
+                                                  'Your stake will be returned to your wallet on-chain.'
+                }
+                details={confirmDetails}
+                confirmLabel={confirm?.kind === 'decline' ? 'Decline award' : 'Confirm & sign'}
+                danger={confirm?.kind === 'decline'}
+                loading={acting}
+                onConfirm={handleConfirm}
+                onCancel={() => setConfirm(null)}
+            />
+
             <PageHeader
                 eyebrow="Vendor"
                 title="My bids"
@@ -209,19 +274,19 @@ export default function VendorMyBidsPage() {
             {error ? <Notice tone="danger">{error}</Notice> : null}
             {proofMessage ? <Notice title="Proof of win">{proofMessage}</Notice> : null}
 
-            <DataGrid columns={3}>
-                <DataPoint label="Open RFQs" value={openRfqs.length} />
-                <DataPoint label="Need reveal" value={revealCount} />
-                <DataPoint label="Won" value={wonCount} />
-                <DataPoint label="Claimable stakes" value={refundCount} />
+            <DataGrid columns={4}>
+                <DataPoint label="Open RFQs"        value={openRfqs.length} />
+                <DataPoint label="Need reveal"       value={revealCount} />
+                <DataPoint label="Won"               value={wonCount} />
+                <DataPoint label="Claimable stakes"  value={refundCount} />
             </DataGrid>
 
             <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
                 <div className="space-y-6">
-                    <Panel title="Open RFQs">
-                        {openRfqs.length === 0 ? (
-                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No open RFQs right now.</div>
-                        ) : (
+
+                    {/* Open RFQs — hide panel entirely when empty to reduce clutter */}
+                    {openRfqs.length > 0 && (
+                        <Panel title="Open RFQs" subtitle="Active auctions accepting bids right now.">
                             <div className="space-y-3">
                                 {openRfqs.map((rfq) => (
                                     <div key={rfq.id} className="rounded-xl border border-white/12 bg-white/[0.05] p-4 transition hover:border-white/20 hover:bg-white/[0.07]">
@@ -256,8 +321,8 @@ export default function VendorMyBidsPage() {
                                     </div>
                                 ))}
                             </div>
-                        )}
-                    </Panel>
+                        </Panel>
+                    )}
 
                     <Panel title="Your bids">
                         {bids.length === 0 ? (
@@ -277,6 +342,11 @@ export default function VendorMyBidsPage() {
                                                     {bid.rfqStatus ? <StatusChip status={bid.rfqStatus} /> : null}
                                                     <TokenChip tokenType={bid.tokenType ?? 0} />
                                                     <PricingChip pricingMode={bid.pricingMode ?? 0} />
+                                                    {bid.isWinner && (
+                                                        <span className="rounded-full bg-emerald-400/15 px-2.5 py-0.5 text-xs font-semibold text-emerald-300">
+                                                            Winner
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="mt-3 max-w-fit">
                                                     <CopyableText value={bid.rfqId} displayValue={truncateMiddle(bid.rfqId, 16, 10)} className="text-sm font-semibold" />
@@ -285,10 +355,13 @@ export default function VendorMyBidsPage() {
                                                     <CopyableText value={bid.id} displayValue={truncateMiddle(bid.id, 14, 8)} />
                                                 </div>
                                             </div>
-                                            <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] px-4 py-3 text-sm lg:min-w-[220px]">
-                                                <div className="text-white/70">Stake: <span className="font-medium text-white">{formatAmount(bid.stake, 0)}</span></div>
-                                                <div className="mt-1 text-white/70">{bid.revealedAmount ? `Bid: ${formatAmount(bid.revealedAmount, bid.tokenType ?? 0)}` : bid.isRevealed ? 'Revealed' : 'Not revealed yet'}</div>
-                                                {bid.isWinner ? <div className="mt-1.5 font-semibold text-emerald-300">Winner</div> : null}
+                                            <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] px-4 py-3 text-sm lg:min-w-[200px]">
+                                                <div className="text-white/60">Stake <span className="font-medium text-white">{formatAmount(bid.stake, 0)}</span></div>
+                                                <div className="mt-1 text-white/60">
+                                                    {bid.revealedAmount
+                                                        ? <>Bid <span className="font-medium text-white">{formatAmount(bid.revealedAmount, bid.tokenType ?? 0)}</span></>
+                                                        : bid.isRevealed ? 'Revealed' : 'Not revealed yet'}
+                                                </div>
                                             </div>
                                         </div>
 
@@ -306,7 +379,7 @@ export default function VendorMyBidsPage() {
 
                                         {!bid.isRevealed && biddingOpen(bid.biddingDeadline, currentBlock) ? (
                                             <div className="mt-3 text-xs text-[hsl(var(--muted-foreground))]">
-                                                Reveal opens after bidding closes. The contract stays `OPEN` until the first reveal lands.
+                                                Reveal opens after bidding closes.
                                             </div>
                                         ) : null}
 
@@ -319,17 +392,17 @@ export default function VendorMyBidsPage() {
 
                                             {bid.isWinner && bid.rfqStatus === 'WINNER_SELECTED' && !bid.winnerAccepted ? (
                                                 <>
-                                                    <Button size="sm" onClick={() => respondToAward(bid, true)} isLoading={acting}>
+                                                    <Button size="sm" onClick={() => setConfirm({ kind: 'accept', bid })} isLoading={acting}>
                                                         Accept
                                                     </Button>
-                                                    <Button size="sm" variant="danger" onClick={() => respondToAward(bid, false)} isLoading={acting}>
+                                                    <Button size="sm" variant="danger" onClick={() => setConfirm({ kind: 'decline', bid })} isLoading={acting}>
                                                         Decline
                                                     </Button>
                                                 </>
                                             ) : null}
 
                                             {canClaimStake(bid, currentBlock) ? (
-                                                <Button size="sm" variant="secondary" onClick={() => claimStake(bid)} isLoading={acting}>
+                                                <Button size="sm" variant="secondary" onClick={() => setConfirm({ kind: 'claim', bid })} isLoading={acting}>
                                                     Claim stake
                                                 </Button>
                                             ) : null}
@@ -353,7 +426,11 @@ export default function VendorMyBidsPage() {
 
                     {txKey ? (
                         <Panel title="Latest transaction">
-                            <TxStatusView idempotencyKey={txKey} compact={true} />
+                            <TxStatusView
+                                idempotencyKey={txKey}
+                                compact={true}
+                                onConfirmed={() => toast.success('Transaction confirmed on-chain.')}
+                            />
                         </Panel>
                     ) : null}
                 </div>
@@ -368,14 +445,6 @@ export default function VendorMyBidsPage() {
                                 createdAt: record.createdAt,
                             }))}
                         />
-                    </Panel>
-
-                    <Panel title="Quick reminders">
-                        <div className="space-y-2 text-sm text-[hsl(var(--muted-foreground))]">
-                            <div>Reveal starts automatically after bidding closes.</div>
-                            <div>`winner_respond` returns the winner stake immediately on acceptance.</div>
-                            <div>`refund_any_stake` is surfaced here as a single "Claim stake" action.</div>
-                        </div>
                     </Panel>
                 </div>
             </div>

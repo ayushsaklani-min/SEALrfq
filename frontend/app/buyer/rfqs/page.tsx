@@ -14,7 +14,6 @@ import {
     Notice,
     PageHeader,
     PageShell,
-    Panel,
     PricingChip,
     SelectInput,
     StatusChip,
@@ -129,21 +128,19 @@ export default function BuyerRfqsPage() {
                 </Notice>
             ) : null}
 
-            <Panel title="Open RFQ by ID" subtitle="Access any RFQ directly — useful when switching wallets or sharing a link.">
-                <div className="flex gap-3">
-                    <div className="flex-1">
-                        <TextInput
-                            value={lookupId}
-                            onChange={(e) => setLookupId(e.target.value)}
-                            placeholder="Paste RFQ id..."
-                            onKeyDown={(e) => { if (e.key === 'Enter' && lookupId.trim()) router.push(`/buyer/rfqs/${encodeURIComponent(lookupId.trim())}`); }}
-                        />
-                    </div>
-                    <Button disabled={!lookupId.trim()} onClick={() => router.push(`/buyer/rfqs/${encodeURIComponent(lookupId.trim())}`)}>
-                        Open
-                    </Button>
+            <div className="flex gap-3">
+                <div className="flex-1">
+                    <TextInput
+                        value={lookupId}
+                        onChange={(e) => setLookupId(e.target.value)}
+                        placeholder="Open any RFQ by ID..."
+                        onKeyDown={(e) => { if (e.key === 'Enter' && lookupId.trim()) router.push(`/buyer/rfqs/${encodeURIComponent(lookupId.trim())}`); }}
+                    />
                 </div>
-            </Panel>
+                <Button disabled={!lookupId.trim()} onClick={() => router.push(`/buyer/rfqs/${encodeURIComponent(lookupId.trim())}`)}>
+                    Open
+                </Button>
+            </div>
 
             {!isVendor && <DataGrid columns={3}>
                 <DataPoint label="Total RFQs" value={rfqs.length} />
@@ -152,38 +149,36 @@ export default function BuyerRfqsPage() {
                 <DataPoint label="In settlement" value={settlementCount} />
             </DataGrid>}
 
-            {!isVendor && <Panel title="Filters">
-                <div className="grid gap-4 md:grid-cols-3">
-                    <Field label="Status">
-                        <SelectInput value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                            <option value="ALL">All statuses</option>
-                            <option value="OPEN">Accepting bids</option>
-                            <option value="REVEAL">Reveal phase</option>
-                            <option value="WINNER_SELECTED">Awaiting winner response</option>
-                            <option value="ESCROW_FUNDED">In delivery</option>
-                            <option value="COMPLETED">Completed</option>
-                            <option value="CANCELLED">Cancelled</option>
-                            <option value="WINNER_DECLINED">Winner declined</option>
-                        </SelectInput>
-                    </Field>
-                    <Field label="Token">
-                        <SelectInput value={tokenFilter} onChange={(event) => setTokenFilter(event.target.value)}>
-                            <option value="ALL">All tokens</option>
-                            <option value="0">{tokenLabel(0)}</option>
-                            <option value="1">{tokenLabel(1)}</option>
-                            <option value="2">{tokenLabel(2)}</option>
-                        </SelectInput>
-                    </Field>
-                    <Field label="Pricing mode">
-                        <SelectInput value={pricingFilter} onChange={(event) => setPricingFilter(event.target.value)}>
-                            <option value="ALL">All pricing modes</option>
-                            <option value="0">{pricingLabel(0)}</option>
-                            <option value="1">{pricingLabel(1)}</option>
-                            <option value="2">{pricingLabel(2)}</option>
-                        </SelectInput>
-                    </Field>
-                </div>
-            </Panel>}
+            {!isVendor && <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Status">
+                    <SelectInput value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                        <option value="ALL">All statuses</option>
+                        <option value="OPEN">Accepting bids</option>
+                        <option value="REVEAL">Reveal phase</option>
+                        <option value="WINNER_SELECTED">Awaiting winner response</option>
+                        <option value="ESCROW_FUNDED">In delivery</option>
+                        <option value="COMPLETED">Completed</option>
+                        <option value="CANCELLED">Cancelled</option>
+                        <option value="WINNER_DECLINED">Winner declined</option>
+                    </SelectInput>
+                </Field>
+                <Field label="Token">
+                    <SelectInput value={tokenFilter} onChange={(event) => setTokenFilter(event.target.value)}>
+                        <option value="ALL">All tokens</option>
+                        <option value="0">{tokenLabel(0)}</option>
+                        <option value="1">{tokenLabel(1)}</option>
+                        <option value="2">{tokenLabel(2)}</option>
+                    </SelectInput>
+                </Field>
+                <Field label="Pricing mode">
+                    <SelectInput value={pricingFilter} onChange={(event) => setPricingFilter(event.target.value)}>
+                        <option value="ALL">All pricing modes</option>
+                        <option value="0">{pricingLabel(0)}</option>
+                        <option value="1">{pricingLabel(1)}</option>
+                        <option value="2">{pricingLabel(2)}</option>
+                    </SelectInput>
+                </Field>
+            </div>}
 
             {!isVendor && (loading ? (
                 <div className="space-y-4">
