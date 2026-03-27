@@ -105,10 +105,18 @@ export default function AdminPage() {
         );
     }
 
+    if (error && !config) {
+        return (
+            <PageShell>
+                <Notice tone="danger">{error}</Notice>
+            </PageShell>
+        );
+    }
+
     if (!config?.isAdmin) {
         return (
             <PageShell>
-                <Notice tone="danger">Admin access required.</Notice>
+                <Notice tone="danger">Admin access required. Make sure you are signed in with the admin wallet address.</Notice>
             </PageShell>
         );
     }

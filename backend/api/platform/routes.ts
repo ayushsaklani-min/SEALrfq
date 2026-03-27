@@ -46,7 +46,7 @@ async function requireAdmin(request: NextRequest) {
     const config = await getPlatformConfig(true);
     const callerHash = await hashAddressToField(auth.walletAddress);
     const isAdmin = ADMIN_ADDRESS
-        ? auth.walletAddress === ADMIN_ADDRESS
+        ? auth.walletAddress.trim().toLowerCase() === ADMIN_ADDRESS.trim().toLowerCase()
         : !config.initialized || callerHash === config.adminHash;
     if (!isAdmin) {
         return NextResponse.json(
@@ -61,10 +61,15 @@ export async function handleGetPlatformConfig(request: NextRequest) {
     const auth = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
     if (auth instanceof NextResponse) return auth;
 
-    const config = await getPlatformConfig(true);
+    let config;
+    try {
+        config = await getPlatformConfig(true);
+    } catch {
+        config = { adminHash: '0field', feeBps: 0, paused: false, treasuryCredits: '0', treasuryUsdcx: '0', treasuryUsad: '0', initialized: false };
+    }
     const callerHash = await hashAddressToField(auth.walletAddress);
     const isAdmin = ADMIN_ADDRESS
-        ? auth.walletAddress === ADMIN_ADDRESS
+        ? auth.walletAddress.trim().toLowerCase() === ADMIN_ADDRESS.trim().toLowerCase()
         : !config.initialized || callerHash === config.adminHash;
     return NextResponse.json({
         status: 'success',
