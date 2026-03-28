@@ -88,10 +88,6 @@ function formatCreateRfqValidationError(issues: ValidationIssue[] | undefined) {
 
 // Duration options in blocks (Aleo ≈ 5s/block)
 const BID_DURATIONS = [
-    { label: '⚡ 5 blocks (~25s) — testing', blocks: 5, isTesting: true },
-    { label: '⚡ 10 blocks (~50s) — testing', blocks: 10, isTesting: true },
-    { label: '⚡ 30 blocks (~2.5min) — testing', blocks: 30, isTesting: true },
-    { label: '⚡ 60 blocks (~5min) — testing', blocks: 60, isTesting: true },
     { label: '30 minutes', blocks: 360 },
     { label: '1 hour', blocks: 720 },
     { label: '2 hours', blocks: 1440 },
@@ -102,10 +98,6 @@ const BID_DURATIONS = [
 ];
 
 const REVEAL_DURATIONS = [
-    { label: '⚡ 5 blocks (~25s) — testing', blocks: 5, isTesting: true },
-    { label: '⚡ 10 blocks (~50s) — testing', blocks: 10, isTesting: true },
-    { label: '⚡ 30 blocks (~2.5min) — testing', blocks: 30, isTesting: true },
-    { label: '⚡ 60 blocks (~5min) — testing', blocks: 60, isTesting: true },
     { label: '1 hour', blocks: 720 },
     { label: '2 hours', blocks: 1440 },
     { label: '4 hours', blocks: 2880 },
@@ -162,8 +154,6 @@ export default function CreateRfqPage() {
         return () => { cancelled = true; };
     }, [setPlatformConfig]);
 
-    const isTestingMode = BID_DURATIONS.find((d) => d.blocks === bidDurationBlocks)?.isTesting ||
-        REVEAL_DURATIONS.find((d) => d.blocks === revealDurationBlocks)?.isTesting || false;
     const effectiveBidBlocks = bidDurationBlocks === 0 ? Number(customBidBlocks) || 0 : bidDurationBlocks;
     const effectiveRevealBlocks = revealDurationBlocks === 0 ? Number(customRevealBlocks) || 0 : revealDurationBlocks;
     const biddingDeadline = currentBlock ? currentBlock + effectiveBidBlocks : 0;
@@ -299,11 +289,6 @@ export default function CreateRfqPage() {
             ) : null}
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
-            {isTestingMode ? (
-                <Notice tone="warning" title="Testing mode active">
-                    You have selected a very short block window. This bypasses production minimums — use only on testnet for rapid testing.
-                </Notice>
-            ) : null}
 
             <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
                 <Panel title="RFQ details">

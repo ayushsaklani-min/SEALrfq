@@ -104,7 +104,7 @@ export function Field({
 }
 
 const inputBaseClass =
-    'w-full rounded-xl border border-white/15 bg-white/[0.06] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/45 focus:border-emerald-300/45 focus:ring-4 focus:ring-emerald-300/10';
+    'w-full rounded-xl border border-white/15 bg-white/[0.06] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/45 focus:border-emerald-300/45 focus:ring-4 focus:ring-emerald-300/10 [&>option]:bg-[#0f172a] [&>option]:text-white';
 
 export function TextInput({ className, ...props }: ComponentProps<'input'>) {
     return <input className={cn(inputBaseClass, className)} {...props} />;
