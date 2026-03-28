@@ -338,8 +338,8 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
 
                     <Panel title="Participant actions" subtitle="Commit and reveal fields stay aligned in separate operator panels.">
                         <div className="grid gap-4 lg:grid-cols-2">
-                            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                                <div className="text-sm font-semibold text-slate-950">Commit bid</div>
+                            <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                                <div className="text-sm font-semibold text-white">Commit bid</div>
                                 <Field label={`Commit amount (${tokenLabel(auctionTokenType)})`} hint="Enter a human-readable amount. The form converts it to on-chain micro-units automatically.">
                                     <TextInput type="number" min="0.000001" step="0.000001" value={commitAmount} onChange={(event) => setCommitAmount(event.target.value)} placeholder="1.0" />
                                 </Field>
@@ -354,8 +354,8 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
                                 </Button>
                             </div>
 
-                            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                                <div className="text-sm font-semibold text-slate-950">Reveal bid</div>
+                            <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                                <div className="text-sm font-semibold text-white">Reveal bid</div>
                                 <Field label="Bid id">
                                     <TextInput value={revealBidId} onChange={(event) => setRevealBidId(event.target.value)} placeholder="Bid id" />
                                 </Field>
