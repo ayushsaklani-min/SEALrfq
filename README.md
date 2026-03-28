@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="frontend/public/logo.png" alt="SEAL RFQ Logo" width="160" />
+  <img src="frontend/public/images/photo-retro.png" alt="SEAL RFQ Logo" width="200" />
   <h1>SEAL RFQ</h1>
   <p>Privacy-preserving procurement protocol on Aleo — sealed bids, private settlement, compliance-grade stablecoin payments</p>
   <br/>
