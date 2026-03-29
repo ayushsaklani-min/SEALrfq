@@ -249,6 +249,13 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
 
     const auctionTokenType = auction.tokenType ?? TOKEN_TYPE.CREDITS;
 
+    const commitAmountRaw = toMicroUnits(commitAmount);
+    const requiredCommitStake = requiredStakeForBid(commitAmountRaw, auction.flatStake);
+    const requiredCommitStakeDisplay = requiredCommitStake > 0n ? fromMicroUnits(requiredCommitStake.toString()) : '';
+    const bidCount = Number(auction.bidCount || '0');
+    const revealedCount = Number(auction.revealedCount || '0');
+    const finalReady = Boolean(auction.finalWinner && auction.finalPrice);
+
     const commitOpen = currentBlock !== null && auction.biddingDeadline ? currentBlock < auction.biddingDeadline : true;
     const revealOpen = currentBlock !== null && auction.biddingDeadline && auction.revealDeadline
         ? currentBlock >= auction.biddingDeadline && currentBlock < auction.revealDeadline
@@ -264,13 +271,6 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
             : commitOpen
               ? { text: 'Commit phase open', color: 'text-sky-400 bg-sky-400/10 border-sky-400/20' }
               : { text: 'Commit closed', color: 'text-orange-400 bg-orange-400/10 border-orange-400/20' };
-
-    const commitAmountRaw = toMicroUnits(commitAmount);
-    const requiredCommitStake = requiredStakeForBid(commitAmountRaw, auction.flatStake);
-    const requiredCommitStakeDisplay = requiredCommitStake > 0n ? fromMicroUnits(requiredCommitStake.toString()) : '';
-    const bidCount = Number(auction.bidCount || '0');
-    const revealedCount = Number(auction.revealedCount || '0');
-    const finalReady = Boolean(auction.finalWinner && auction.finalPrice);
     const linkedRfqHref = auction.rfqId ? `/buyer/rfqs/${encodeURIComponent(auction.rfqId)}` : null;
     const workflowSteps: WorkflowGuideStep[] = [
         {
