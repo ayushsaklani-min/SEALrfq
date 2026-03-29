@@ -156,7 +156,8 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Buyer"
+                eyebrow="RFQ"
+                eyebrowHref={`/buyer/rfqs/${encodeURIComponent(rfq.id)}`}
                 title={`Select winner for ${rfq.itemName || rfq.id}`}
                 description="Choose the winning revealed bid after the reveal deadline has passed."
                 actions={

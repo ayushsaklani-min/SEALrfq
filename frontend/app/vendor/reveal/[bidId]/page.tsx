@@ -169,7 +169,7 @@ export default function RevealBidPage({ params }: { params: { bidId: string } })
     if (bid.isRevealed) {
         return (
             <PageShell>
-                <PageHeader eyebrow="Vendor" title="Bid already revealed" description="This bid has already been revealed on-chain." />
+                <PageHeader eyebrow="My Bids" eyebrowHref="/vendor/my-bids" title="Bid already revealed" description="This bid has already been revealed on-chain." />
                 <Link href="/vendor/my-bids" className="inline-flex text-sm font-medium text-[hsl(var(--primary))] hover:underline">
                     Return to my bids
                 </Link>

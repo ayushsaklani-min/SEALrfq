@@ -113,7 +113,8 @@ export default function FundEscrowPage({ params }: { params: { id: string } }) {
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Buyer"
+                eyebrow="RFQ"
+                eyebrowHref={`/buyer/rfqs/${encodeURIComponent(rfq.id)}`}
                 title={`Fund escrow for ${rfq.itemName || rfq.id}`}
                 description="Move the winning amount into escrow once the vendor has accepted the award."
                 actions={

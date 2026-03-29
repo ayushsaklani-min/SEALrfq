@@ -21,7 +21,7 @@ const buyerActions = [
 ];
 
 const vendorActions = [
-    { title: 'Browse RFQs', href: '/buyer/rfqs', description: 'Find open requests and submit sealed bids.', icon: FileText, accent: 'bg-blue-400/15 border-blue-300/25 text-blue-200' },
+    { title: 'Open RFQs', href: '/vendor/rfqs', description: 'Find open requests and submit sealed bids.', icon: FileText, accent: 'bg-blue-400/15 border-blue-300/25 text-blue-200' },
     { title: 'My Bids', href: '/vendor/my-bids', description: 'Track your bids, reveals, and awards.', icon: ShieldCheck, accent: 'bg-emerald-400/15 border-emerald-300/25 text-emerald-200' },
     { title: 'Auctions', href: '/auctions', description: 'Participate in live price-discovery auctions.', icon: Gavel, accent: 'bg-amber-400/15 border-amber-300/25 text-amber-200' },
 ];

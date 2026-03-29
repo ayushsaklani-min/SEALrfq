@@ -387,7 +387,8 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Buyer"
+                eyebrow="My RFQs"
+                eyebrowHref="/buyer/rfqs"
                 title={rfq.itemName || 'RFQ detail'}
                 description={rfq.description || 'Manage bids, import auction results, and hand off into settlement.'}
                 actions={

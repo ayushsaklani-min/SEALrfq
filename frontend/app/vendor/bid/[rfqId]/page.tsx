@@ -224,7 +224,8 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Vendor"
+                eyebrow="Open RFQs"
+                eyebrowHref="/vendor/rfqs"
                 title={rfq.itemName || 'Submit bid'}
                 description="Enter the price, approve the wallet transaction, and keep the saved nonce for reveal."
                 actions={

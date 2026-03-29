@@ -217,6 +217,7 @@ export default function DutchAuctionsPage() {
         <PageShell className="space-y-6">
             <PageHeader
                 eyebrow="Auctions"
+                eyebrowHref="/auctions"
                 title="Dutch Auction"
                 description="Price starts high and drops each block. The current deployed contract supports linked RFQs and ALEO credits only."
             />

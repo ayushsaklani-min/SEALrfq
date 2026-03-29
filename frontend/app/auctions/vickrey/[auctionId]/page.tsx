@@ -334,7 +334,8 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Auctions"
+                eyebrow="Vickrey Auctions"
+                eyebrowHref="/auctions/vickrey"
                 title={`Vickrey ${params.auctionId}`}
                 description={`Commit sealed bids, reveal them, finalize the result, then import it into the linked RFQ. Bid prices use ${tokenLabel(auctionTokenType)}. Stake remains ALEO credits.`}
                 actions={<TokenChip tokenType={auction.tokenType} label={auction.tokenSymbol || undefined} />}

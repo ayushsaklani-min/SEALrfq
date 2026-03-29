@@ -208,6 +208,7 @@ export default function VickreyAuctionsPage() {
         <PageShell className="space-y-6">
             <PageHeader
                 eyebrow="Auctions"
+                eyebrowHref="/auctions"
                 title="Vickrey Auction"
                 description="Sealed second-price auction. The current deployed contract supports linked RFQs and ALEO credits only."
             />

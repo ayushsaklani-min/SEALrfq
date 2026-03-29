@@ -207,7 +207,8 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Auctions"
+                eyebrow="Dutch Auctions"
+                eyebrowHref="/auctions/dutch"
                 title={`Dutch ${params.auctionId}`}
                 description={`Track the live price, take it in one transaction, then import the result into the linked RFQ. Prices use ${tokenLabel(auctionTokenType)}. Commit stake remains ALEO credits.`}
                 actions={<TokenChip tokenType={auction.tokenType} label={auction.tokenSymbol || undefined} />}

@@ -454,6 +454,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         <PageShell className="space-y-6">
             <PageHeader
                 eyebrow="Settlement"
+                eyebrowHref="/escrow"
                 title={`Escrow for ${escrow.rfqId}`}
                 description="Manage public releases, view settlement status, and handle timeout protection actions from one place."
                 actions={

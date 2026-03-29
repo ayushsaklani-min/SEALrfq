@@ -13,11 +13,13 @@ export function PageShell({ children, className }: { children: ReactNode; classN
 
 export function PageHeader({
     eyebrow,
+    eyebrowHref,
     title,
     description,
     actions,
 }: {
     eyebrow?: string;
+    eyebrowHref?: string;
     title: string;
     description?: string;
     actions?: ReactNode;
@@ -26,10 +28,17 @@ export function PageHeader({
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="space-y-1.5">
                 {eyebrow ? (
-                    <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-emerald-200/75">
-                        <span className="h-1 w-1 rounded-full bg-emerald-400/70" />
-                        {eyebrow}
-                    </div>
+                    eyebrowHref ? (
+                        <Link href={eyebrowHref} className="group inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-emerald-200/75 transition-colors hover:text-emerald-200">
+                            <span className="h-1 w-1 rounded-full bg-emerald-400/70 transition-all group-hover:w-2" />
+                            ← {eyebrow}
+                        </Link>
+                    ) : (
+                        <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-emerald-200/75">
+                            <span className="h-1 w-1 rounded-full bg-emerald-400/70" />
+                            {eyebrow}
+                        </div>
+                    )
                 ) : null}
                 <h1 className="premium-heading text-2xl font-bold tracking-tight text-white sm:text-3xl">{title}</h1>
                 {description ? <p className="max-w-3xl text-sm leading-6 text-white/70">{description}</p> : null}

@@ -114,7 +114,8 @@ export default function BuyerRfqsPage() {
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Buyer"
+                eyebrow="Dashboard"
+                eyebrowHref="/dashboard"
                 title="My RFQs"
                 description="A compact view of every RFQ you created, with the next action for each."
                 actions={

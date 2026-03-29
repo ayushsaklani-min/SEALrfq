@@ -266,7 +266,8 @@ export default function VendorMyBidsPage() {
             />
 
             <PageHeader
-                eyebrow="Vendor"
+                eyebrow="Dashboard"
+                eyebrowHref="/dashboard"
                 title="My bids"
                 description="See what needs action now: commit, reveal, respond, or claim stake."
             />

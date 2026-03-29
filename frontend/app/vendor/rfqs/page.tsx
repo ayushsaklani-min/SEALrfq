@@ -102,7 +102,8 @@ export default function VendorOpenRfqsPage() {
     return (
         <PageShell className="space-y-6">
             <PageHeader
-                eyebrow="Vendor"
+                eyebrow="Dashboard"
+                eyebrowHref="/dashboard"
                 title="All RFQs"
                 description="Browse all requests for quotation. Open RFQs accept bids — click any card to view details and place a sealed bid."
                 actions={
