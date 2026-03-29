@@ -20,6 +20,7 @@ import {
     type WorkflowGuideStep,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
+import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { formatAmount, PRICING_MODE, tokenLabel, TOKEN_TYPE, randomField } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
@@ -76,6 +77,7 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
     const [revealBidId, setRevealBidId] = useState('');
     const [revealAmount, setRevealAmount] = useState('');
     const [revealSalt, setRevealSalt] = useState('');
+    const [currentBlock, setCurrentBlock] = useState<number | null>(null);
     const [txKey, setTxKey] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [acting, setActing] = useState(false);
@@ -85,11 +87,15 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
         let cancelled = false;
         const load = async () => {
             try {
-                const response = await authenticatedFetch(`/api/auction/vickrey/${params.auctionId}`);
+                const [response, blockHeight] = await Promise.all([
+                    authenticatedFetch(`/api/auction/vickrey/${params.auctionId}`),
+                    fetchCurrentBlockHeight(),
+                ]);
                 const payload = await response.json();
                 if (!response.ok) throw new Error(payload?.error?.message || 'Failed to load Vickrey auction.');
                 if (!cancelled) {
                     setAuction(payload.data);
+                    setCurrentBlock(blockHeight);
                     const savedBid = localStorage.getItem(`vickrey_bid_latest_${params.auctionId}`);
                     if (savedBid) {
                         try {
@@ -242,6 +248,23 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
     }
 
     const auctionTokenType = auction.tokenType ?? TOKEN_TYPE.CREDITS;
+
+    const commitOpen = currentBlock !== null && auction.biddingDeadline ? currentBlock < auction.biddingDeadline : true;
+    const revealOpen = currentBlock !== null && auction.biddingDeadline && auction.revealDeadline
+        ? currentBlock >= auction.biddingDeadline && currentBlock < auction.revealDeadline
+        : true;
+    const bothClosed = currentBlock !== null && auction.revealDeadline ? currentBlock >= auction.revealDeadline : false;
+
+    const phaseLabel = finalReady
+        ? { text: 'Finalized', color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' }
+        : bothClosed
+          ? { text: 'Reveal closed', color: 'text-red-400 bg-red-400/10 border-red-400/20' }
+          : revealOpen
+            ? { text: 'Reveal phase', color: 'text-amber-400 bg-amber-400/10 border-amber-400/20' }
+            : commitOpen
+              ? { text: 'Commit phase open', color: 'text-sky-400 bg-sky-400/10 border-sky-400/20' }
+              : { text: 'Commit closed', color: 'text-orange-400 bg-orange-400/10 border-orange-400/20' };
+
     const commitAmountRaw = toMicroUnits(commitAmount);
     const requiredCommitStake = requiredStakeForBid(commitAmountRaw, auction.flatStake);
     const requiredCommitStakeDisplay = requiredCommitStake > 0n ? fromMicroUnits(requiredCommitStake.toString()) : '';
@@ -322,12 +345,22 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
             <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
                 <div className="space-y-6">
                     <Panel title="Auction summary">
+                        <div className="mb-3 flex items-center gap-2">
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${phaseLabel.color}`}>
+                                {phaseLabel.text}
+                            </span>
+                            {currentBlock && (
+                                <span className="text-xs text-[hsl(var(--muted-foreground))]">Block {currentBlock}</span>
+                            )}
+                        </div>
                         <DataGrid columns={2}>
                             <DataPoint label="Auction id" value={<CopyableText value={params.auctionId} displayValue={truncateMiddle(params.auctionId, 16, 10)} />} />
                             <DataPoint label="RFQ id" value={auction.rfqId ? <CopyableText value={auction.rfqId} displayValue={truncateMiddle(auction.rfqId, 16, 10)} /> : '--'} />
                             <DataPoint label="Creator" value={auction.creator ? <CopyableText value={auction.creator} displayValue={truncateMiddle(auction.creator, 14, 10)} /> : '--'} />
                             <DataPoint label="Bid count" value={auction.bidCount || '0'} />
                             <DataPoint label="Revealed" value={auction.revealedCount || '0'} />
+                            <DataPoint label="Bidding deadline" value={auction.biddingDeadline ? `Block ${auction.biddingDeadline}` : '--'} />
+                            <DataPoint label="Reveal deadline" value={auction.revealDeadline ? `Block ${auction.revealDeadline}` : '--'} />
                             <DataPoint label="Minimum stake" value={formatAmount(auction.flatStake, TOKEN_TYPE.CREDITS)} />
                             <DataPoint label="Lowest bid" value={formatAmount(auction.lowestBid, auctionTokenType)} />
                             <DataPoint label="Second price" value={formatAmount(auction.secondLowestBid, auctionTokenType)} />
@@ -339,33 +372,64 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
                     <Panel title="Participant actions" subtitle="Commit and reveal fields stay aligned in separate operator panels.">
                         <div className="grid gap-4 lg:grid-cols-2">
                             <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
-                                <div className="text-sm font-semibold text-white">Commit bid</div>
+                                <div className="flex items-center justify-between">
+                                    <div className="text-sm font-semibold text-white">Commit bid</div>
+                                    {!commitOpen && (
+                                        <span className="text-xs text-orange-400 bg-orange-400/10 border border-orange-400/20 rounded-full px-2 py-0.5">Closed</span>
+                                    )}
+                                </div>
+                                {!commitOpen && (
+                                    <div className="rounded-lg border border-orange-400/20 bg-orange-400/5 px-3 py-2 text-xs text-orange-300">
+                                        Commit phase closed at block {auction.biddingDeadline}.{revealOpen ? ' You can now reveal your bid.' : ''}
+                                    </div>
+                                )}
                                 <Field label={`Commit amount (${tokenLabel(auctionTokenType)})`} hint="Enter a human-readable amount. The form converts it to on-chain micro-units automatically.">
-                                    <TextInput type="number" min="0.000001" step="0.000001" value={commitAmount} onChange={(event) => setCommitAmount(event.target.value)} placeholder="1.0" />
+                                    <TextInput type="number" min="0.000001" step="0.000001" value={commitAmount} onChange={(event) => setCommitAmount(event.target.value)} placeholder="1.0" disabled={!commitOpen} />
                                 </Field>
                                 <Field label="Required stake (ALEO credits)" hint="Calculated automatically from the higher of the auction minimum stake and 10% of your bid.">
                                     <TextInput value={requiredCommitStakeDisplay} readOnly placeholder="Calculated automatically" />
                                 </Field>
                                 <Field label="Salt">
-                                    <TextInput value={commitSalt} onChange={(event) => setCommitSalt(event.target.value)} />
+                                    <TextInput value={commitSalt} onChange={(event) => setCommitSalt(event.target.value)} disabled={!commitOpen} />
                                 </Field>
-                                <Button onClick={commitBid} isLoading={acting}>
+                                <Button onClick={commitBid} isLoading={acting} disabled={!commitOpen}>
                                     Commit bid
                                 </Button>
                             </div>
 
                             <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
-                                <div className="text-sm font-semibold text-white">Reveal bid</div>
+                                <div className="flex items-center justify-between">
+                                    <div className="text-sm font-semibold text-white">Reveal bid</div>
+                                    {revealOpen && (
+                                        <span className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">Open</span>
+                                    )}
+                                    {!revealOpen && bothClosed && (
+                                        <span className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-full px-2 py-0.5">Closed</span>
+                                    )}
+                                    {!revealOpen && !bothClosed && commitOpen && (
+                                        <span className="text-xs text-[hsl(var(--muted-foreground))] bg-white/5 border border-white/10 rounded-full px-2 py-0.5">Waiting</span>
+                                    )}
+                                </div>
+                                {!revealOpen && commitOpen && (
+                                    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-[hsl(var(--muted-foreground))]">
+                                        Reveal phase opens after the commit deadline at block {auction.biddingDeadline}.
+                                    </div>
+                                )}
+                                {bothClosed && !finalReady && (
+                                    <div className="rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-xs text-red-300">
+                                        Reveal phase closed at block {auction.revealDeadline}. Finalize the auction to determine the winner.
+                                    </div>
+                                )}
                                 <Field label="Bid id">
-                                    <TextInput value={revealBidId} onChange={(event) => setRevealBidId(event.target.value)} placeholder="Bid id" />
+                                    <TextInput value={revealBidId} onChange={(event) => setRevealBidId(event.target.value)} placeholder="Bid id" disabled={!revealOpen} />
                                 </Field>
                                 <Field label={`Reveal amount (${tokenLabel(auctionTokenType)})`} hint="Reveal the same human-readable amount you used during commit.">
-                                    <TextInput type="number" min="0.000001" step="0.000001" value={revealAmount} onChange={(event) => setRevealAmount(event.target.value)} placeholder="1.0" />
+                                    <TextInput type="number" min="0.000001" step="0.000001" value={revealAmount} onChange={(event) => setRevealAmount(event.target.value)} placeholder="1.0" disabled={!revealOpen} />
                                 </Field>
                                 <Field label="Reveal salt">
-                                    <TextInput value={revealSalt} onChange={(event) => setRevealSalt(event.target.value)} placeholder="Reveal salt" />
+                                    <TextInput value={revealSalt} onChange={(event) => setRevealSalt(event.target.value)} placeholder="Reveal salt" disabled={!revealOpen} />
                                 </Field>
-                                <Button variant="secondary" onClick={revealBid} isLoading={acting}>
+                                <Button variant="secondary" onClick={revealBid} isLoading={acting} disabled={!revealOpen}>
                                     Reveal bid
                                 </Button>
                             </div>
