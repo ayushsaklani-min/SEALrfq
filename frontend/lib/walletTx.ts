@@ -1,5 +1,6 @@
 import { authenticatedFetch } from './authFetch';
 import { ensureShieldProgramAccess } from './shieldWallet';
+import { formatAmount } from './sealProtocol';
 import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
 import { Network } from '@provablehq/aleo-types';
 
@@ -58,6 +59,13 @@ function getRecordPlaintext(record: any): string | null {
     return null;
 }
 
+function programIdToTokenName(programId: string): string {
+    if (programId.includes('usdcx')) return 'USDCX';
+    if (programId.includes('usad')) return 'USAD';
+    if (programId === 'credits.aleo') return 'ALEO credits';
+    return programId;
+}
+
 /**
  * Fetches an unspent credits.aleo record from Shield wallet and returns its plaintext.
  * The plaintext is what Shield wallet accepts as a transaction input for credits.record.
@@ -87,7 +95,7 @@ export async function requestCreditsRecord(requiredMicrocredits: bigint | number
     console.log('[requestCreditsRecord] raw records from Shield:', JSON.stringify(records, null, 2));
 
     if (!Array.isArray(records) || records.length === 0) {
-        throw new Error('No credits records found in Shield wallet. Make sure you have private credits (use transfer_public_to_private first).');
+        throw new Error('No private ALEO credits found in Shield. Use Transfer → Private in Shield to convert public credits to private first.');
     }
 
     const unspentRecords = records.filter((r) => !r?.spent);
@@ -113,7 +121,7 @@ export async function requestCreditsRecord(requiredMicrocredits: bigint | number
         const totalBalance = parsedBalances.reduce((sum, balance) => sum + balance, 0n);
         const largestRecord = parsedBalances.reduce((largest, balance) => (balance > largest ? balance : largest), 0n);
         throw new Error(
-            `No private credits record in Shield has enough balance for this invoice. Required: ${required} microcredits. Largest record: ${largestRecord}. Total unspent private balance: ${totalBalance}.`
+            `No single Shield private record covers this invoice. Required: ${formatAmount(required, 0)}. Largest record: ${formatAmount(largestRecord, 0)}. Total private balance: ${formatAmount(totalBalance, 0)}. You may need to consolidate records.`
         );
     }
 
@@ -127,8 +135,8 @@ export async function requestCreditsRecord(requiredMicrocredits: bigint | number
 
     throw new Error(
         totalBalance > 0n
-            ? `Shield returned credits records, but none exposed usable plaintext. Total unspent balance: ${totalBalance} microcredits. Reconnect with AutoDecrypt enabled or update Shield.`
-            : 'Shield did not return a usable private credits record. Reconnect with AutoDecrypt enabled or update Shield.'
+            ? `Shield returned credits records but none exposed usable plaintext. Total: ${formatAmount(totalBalance, 0)}. Reconnect Shield with AutoDecrypt enabled, or update your Shield extension.`
+            : 'No usable private credits record found in Shield. Make sure AutoDecrypt is enabled and your wallet is connected.'
     );
 }
 
@@ -149,12 +157,12 @@ export async function requestStablecoinRecord(programId: string, requiredAmount:
         try {
             records = await requestFn.call(shield, programId, true);
         } catch (fallbackError: any) {
-            throw new Error(`Failed to fetch ${programId} records: ${fallbackError?.message || e?.message}`);
+            throw new Error(`Failed to fetch ${programIdToTokenName(programId)} records from Shield: ${fallbackError?.message || e?.message || 'Unknown error'}`);
         }
     }
 
     if (!Array.isArray(records) || records.length === 0) {
-        throw new Error(`No ${programId} records found in Shield wallet.`);
+        throw new Error(`No ${programIdToTokenName(programId)} records found in Shield. Make sure you have private ${programIdToTokenName(programId)} tokens.`);
     }
 
     const unspent = records.filter((r) => !r?.spent);
@@ -166,7 +174,7 @@ export async function requestStablecoinRecord(programId: string, requiredAmount:
         }
     }
 
-    throw new Error(`No ${programId} record with sufficient balance found in Shield wallet.`);
+    throw new Error(`No ${programIdToTokenName(programId)} record with sufficient balance found in Shield. Make sure you have private ${programIdToTokenName(programId)} tokens in your Shield wallet.`);
 }
 
 /**
@@ -190,12 +198,12 @@ export async function requestStablecoinRecordWithProofs(
         try {
             records = await requestFn.call(shield, programId, true);
         } catch (fallbackError: any) {
-            throw new Error(`Failed to fetch ${programId} records: ${fallbackError?.message || e?.message}`);
+            throw new Error(`Failed to fetch ${programIdToTokenName(programId)} records from Shield: ${fallbackError?.message || e?.message || 'Unknown error'}`);
         }
     }
 
     if (!Array.isArray(records) || records.length === 0) {
-        throw new Error(`No ${programId} records found in Shield wallet.`);
+        throw new Error(`No ${programIdToTokenName(programId)} records found in Shield. Make sure you have private ${programIdToTokenName(programId)} tokens.`);
     }
 
     const unspent = records.filter((r) => !r?.spent);
@@ -221,12 +229,12 @@ export async function requestStablecoinRecordWithProofs(
     }
 
     if (!tokenRecord) {
-        throw new Error(`No ${programId} Token record with sufficient balance found in Shield wallet.`);
+        throw new Error(`No ${programIdToTokenName(programId)} token record with sufficient balance found in Shield. Make sure you have private ${programIdToTokenName(programId)} tokens.`);
     }
     if (proofRecords.length < 2) {
         throw new Error(
-            `Shield wallet does not have enough MerkleProof records for ${programId}. ` +
-            `Found ${proofRecords.length}, need 2. Make sure you have obtained compliance proofs from Shield.`
+            `Shield does not have enough compliance proof records for ${programIdToTokenName(programId)}. ` +
+            `Found ${proofRecords.length}, need 2. Make sure you have obtained your compliance inclusion proofs from Shield.`
         );
     }
 

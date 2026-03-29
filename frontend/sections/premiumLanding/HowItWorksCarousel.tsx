@@ -70,7 +70,7 @@ export function HowItWorksCarousel() {
 
                 <div className="slide-in-left" style={{ transitionDelay: '0.1s' }}>
                     <div className="grid items-stretch gap-8 lg:grid-cols-2 lg:gap-0">
-                        <div className="relative aspect-[4/3] overflow-hidden rounded-lg lg:min-h-[500px] lg:rounded-r-none lg:rounded-l-lg">
+                        <div className="relative isolate aspect-[4/3] overflow-hidden rounded-lg lg:min-h-[500px] lg:rounded-r-none lg:rounded-l-lg">
                             {howItWorksConfig.slides.map((slide, index) => (
                                 <div
                                     key={slide.title}
@@ -120,7 +120,7 @@ export function HowItWorksCarousel() {
                             </div>
                         </div>
 
-                        <div className="relative flex flex-col justify-center overflow-hidden rounded-lg border border-white/10 bg-white/5 p-8 lg:rounded-l-none lg:border-l-0 lg:p-12">
+                        <div className="relative z-10 flex flex-col justify-center overflow-hidden rounded-lg border border-white/10 bg-white/5 p-8 lg:rounded-l-none lg:border-l-0 lg:p-12">
                             {howItWorksConfig.slides.map((slide, index) => (
                                 <div
                                     key={slide.title}

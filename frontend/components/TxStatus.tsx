@@ -119,6 +119,19 @@ export function TxStatusView({
         ? tx.statusHistory
         : (() => { try { return JSON.parse(tx.statusHistory || '[]'); } catch { return []; } })();
 
+    const STATUS_FRIENDLY: Record<string, string> = {
+        PREPARED: 'Prepared',
+        SUBMITTED: 'Submitted',
+        CONFIRMED: 'Confirmed',
+        REJECTED: 'Failed',
+        EXPIRED: 'Expired',
+    };
+
+    const isWalletRejected = tx.txHash?.startsWith('wallet_rejected_');
+    const friendlyTransition = tx.transition
+        ?.replace(/^[^/]+\//, '')  // strip program id, keep function name
+        ?.replace(/_/g, ' ');      // underscores → spaces
+
     const meta: Record<TxStatus, { icon: React.ReactNode; label: string; border: string; bg: string; textColor: string }> = {
         PREPARED:  { icon: <Clock className="h-4 w-4 text-white/40" />,            label: 'Preparing',           border: 'border-white/10',        bg: 'bg-white/[0.04]',        textColor: 'text-white/70' },
         SUBMITTED: { icon: <Clock className="h-4 w-4 animate-pulse text-blue-400" />, label: 'Processing on-chain…', border: 'border-blue-400/25',     bg: 'bg-blue-400/[0.07]',     textColor: 'text-blue-200' },
@@ -134,16 +147,20 @@ export function TxStatusView({
             <div className="flex items-center gap-2">
                 {icon}
                 <span className={`text-sm font-semibold ${textColor}`}>{label}</span>
-                <span className="ml-auto font-mono text-xs text-white/30">{tx.transition}</span>
+                {friendlyTransition ? (
+                    <span className="ml-auto font-mono text-xs text-white/30 capitalize">{friendlyTransition}</span>
+                ) : null}
             </div>
 
-            {tx.txHash && (
+            {isWalletRejected ? (
+                <div className="mt-2 text-xs text-red-300/80">Wallet rejected the transaction. Check your Shield wallet and try again.</div>
+            ) : tx.txHash ? (
                 <div className="mt-3">
                     <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/30">Transaction</div>
                     <div className="flex items-center gap-2">
                         {tx.txHash.startsWith('at1') ? (
                             <a
-                                href={`https://explorer.aleo.org/transaction/${tx.txHash}`}
+                                href={`https://testnet.explorer.provable.com/transaction/${tx.txHash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="min-w-0 truncate font-mono text-xs text-blue-300 hover:underline"
@@ -156,10 +173,12 @@ export function TxStatusView({
                         <CopyInlineButton value={tx.txHash} title="Copy transaction hash" />
                     </div>
                 </div>
-            )}
+            ) : null}
 
-            {tx.status === 'REJECTED' && tx.error && (
-                <div className="mt-2 text-xs text-red-300/80">{tx.error}</div>
+            {tx.status === 'REJECTED' && tx.error && !isWalletRejected && (
+                <div className="mt-2 text-xs text-red-300/80 break-words">
+                    {tx.error.length > 200 ? tx.error.slice(0, 200) + '…' : tx.error}
+                </div>
             )}
 
             {tx.status === 'REJECTED' && tx.canRetry && onRetry && (
@@ -178,7 +197,7 @@ export function TxStatusView({
                 <div className="mt-3 space-y-1 border-t border-white/8 pt-3">
                     {history.map((entry, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs">
-                            <span className="text-white/50">{entry.status}</span>
+                            <span className="text-white/50">{STATUS_FRIENDLY[entry.status] || entry.status}</span>
                             <span className="font-mono text-white/30">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                         </div>
                     ))}

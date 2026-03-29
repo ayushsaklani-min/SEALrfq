@@ -24,7 +24,7 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
-import { calculateFee, formatAmount, netAfterFee, randomField, TOKEN_TYPE } from '@/lib/sealProtocol';
+import { blockEta, calculateFee, formatAmount, netAfterFee, randomField, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { executeWithAdapter, listShieldCreditsRecords, listShieldStablecoinRecords, requestCreditsRecord, requestStablecoinRecord, requestStablecoinRecordWithProofs, submitTrackedResult, type ShieldCreditsRecordSummary, type ShieldStablecoinRecordSummary, walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
@@ -467,6 +467,13 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
+            {!escrow.paid && escrow.currentBlock < escrow.recoveryBlock ? (
+                <Notice tone="neutral" title="Recovery window not yet open">
+                    {escrow.pricingMode !== 0
+                        ? `This RFQ used a ${escrow.pricingMode === 1 ? 'Vickrey' : 'Dutch'} auction. After the auction result was imported, the escrow recovery window opens at block ${escrow.recoveryBlock} — ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} from now. Until then, settle via Path A (public release) or Path B (private invoice). Winner claim and creator reclaim unlock after that block.`
+                        : `The escrow recovery window opens at block ${escrow.recoveryBlock} — ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} from now. Winner claim and creator reclaim unlock after that block.`}
+                </Notice>
+            ) : null}
             {escrow.settlementPathLocked ? (
                 <Notice title="Settlement path locked">
                     {escrow.settlementPathLocked === 'PRIVATE_PAYMENT'
@@ -484,9 +491,17 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                             <DataPoint label="Winning amount" value={formatAmount(escrow.winningAmount, escrow.tokenType)} />
                             <DataPoint label="Released so far" value={formatAmount(escrow.releasedAmount, escrow.tokenType)} />
                             <DataPoint label="Remaining" value={formatAmount(escrow.remainingAmount, escrow.tokenType)} />
-                            <DataPoint label="Current block" value={escrow.currentBlock} />
-                            <DataPoint label="Recovery block" value={escrow.recoveryBlock} subtle="Winner claim opens after this block if unpaid." />
-                            <DataPoint label="Escrow timeout" value={escrow.timeoutBlock} subtle="Creator timeout and cancel logic uses this window." />
+                            <DataPoint label="Current block" value={escrow.currentBlock} subtle="Live Aleo network block height." />
+                            <DataPoint
+                                label="Recovery window opens"
+                                value={escrow.currentBlock >= escrow.recoveryBlock ? 'Open now' : blockEta(escrow.recoveryBlock, escrow.currentBlock)}
+                                subtle={`Block ${escrow.recoveryBlock} — winner claim & creator reclaim unlock here.`}
+                            />
+                            <DataPoint
+                                label="Escrow timeout"
+                                value={escrow.currentBlock >= escrow.timeoutBlock ? 'Passed' : blockEta(escrow.timeoutBlock, escrow.currentBlock)}
+                                subtle={`Block ${escrow.timeoutBlock} — cancel-for-missing-escrow window.`}
+                            />
                         </DataGrid>
                     </Panel>
 
@@ -717,9 +732,13 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                             )}
                         </ActionBar>
                         <div className="mt-3 text-sm text-white/55">
-                            {escrow.paid
-                                ? 'Winner was paid privately. Recover the remaining escrow bond from this panel.'
-                                : 'Use winner claim or creator reclaim only when the invoice path has not been used.'}
+                            {escrow.paid && escrow.canRecoverBond
+                                ? 'Private payment confirmed. You can now recover the remaining escrow bond.'
+                                : escrow.paid && !escrow.canRecoverBond
+                                  ? 'Private payment recorded, but there is no remaining escrow balance to recover.'
+                                  : escrow.currentBlock < escrow.recoveryBlock
+                                    ? `Recovery window opens ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} (block ${escrow.recoveryBlock}). Winner claim and creator reclaim unlock after that point.`
+                                    : 'Recovery window is open. Use winner claim or creator reclaim — these actions are only available when the private invoice path was not used.'}
                         </div>
                     </Panel>
 

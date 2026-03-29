@@ -189,7 +189,7 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                                             <div className="flex items-center gap-2">
                                                 {isExplorerTx(event.txId) ? (
                                                     <a
-                                                        href={`https://explorer.aleo.org/transaction/${event.txId}`}
+                                                        href={`https://testnet.explorer.provable.com/transaction/${event.txId}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
                                                         className="font-mono text-[13px] text-emerald-300 hover:underline"
