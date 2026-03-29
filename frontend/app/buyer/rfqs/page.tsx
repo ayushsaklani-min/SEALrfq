@@ -22,7 +22,8 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
-import { formatAmount, pricingLabel, tokenLabel } from '@/lib/sealProtocol';
+import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import { blockEta, formatAmount, pricingLabel, tokenLabel } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 
 type RfqListItem = {
@@ -60,6 +61,7 @@ export default function BuyerRfqsPage() {
     const [rfqs, setRfqs] = useState<RfqListItem[]>([]);
     const [loading, setLoading] = useState(!isVendor);
     const [error, setError] = useState<string | null>(null);
+    const [currentBlock, setCurrentBlock] = useState<number | null>(null);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [tokenFilter, setTokenFilter] = useState('ALL');
     const [pricingFilter, setPricingFilter] = useState('ALL');
@@ -69,12 +71,18 @@ export default function BuyerRfqsPage() {
         let cancelled = false;
         const load = async () => {
             try {
-                const response = await authenticatedFetch('/api/rfq/my-rfqs');
+                const [response, blockHeight] = await Promise.all([
+                    authenticatedFetch('/api/rfq/my-rfqs'),
+                    fetchCurrentBlockHeight(),
+                ]);
                 const payload = await response.json();
                 if (!response.ok) {
                     throw new Error(payload?.error?.message || 'Failed to load RFQs.');
                 }
-                if (!cancelled) setRfqs(payload.data || []);
+                if (!cancelled) {
+                    setRfqs(payload.data || []);
+                    setCurrentBlock(blockHeight);
+                }
             } catch (caught: any) {
                 if (!cancelled) setError(caught?.message || 'Failed to load RFQs.');
             } finally {
@@ -229,8 +237,8 @@ export default function BuyerRfqsPage() {
                                     <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-200/70">Next action</div>
                                     <div className="mt-1.5 text-sm font-semibold text-amber-100">{nextActionLabel(rfq)}</div>
                                     <div className="mt-3 space-y-1 text-xs text-white/55">
-                                        <div>Bid close: <span className="text-white/80 font-medium">block {rfq.biddingDeadline}</span></div>
-                                        <div>Reveal close: <span className="text-white/80 font-medium">block {rfq.revealDeadline}</span></div>
+                                        <div>Bid close: <span className="text-white/80 font-medium">{blockEta(rfq.biddingDeadline, currentBlock)}</span></div>
+                                        <div>Reveal close: <span className="text-white/80 font-medium">{blockEta(rfq.revealDeadline, currentBlock)}</span></div>
                                     </div>
                                 </div>
                             </div>

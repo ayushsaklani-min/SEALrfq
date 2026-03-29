@@ -159,6 +159,16 @@ export function formatAmount(
     }
 }
 
+// Returns a human time string for a deadline block relative to current block.
+// e.g. "in ~2h 30m" | "in ~45m" | "closed" | "block 15400142"
+export function blockEta(targetBlock: number | null | undefined, currentBlock: number | null | undefined): string {
+    if (!targetBlock) return '--';
+    if (!currentBlock) return `block ${targetBlock}`;
+    const delta = targetBlock - currentBlock;
+    if (delta <= 0) return 'closed';
+    return `in ~${formatBlockTime(delta)}`;
+}
+
 export function formatBlockTime(blockDelta: number) {
     const totalSeconds = Math.max(0, Math.round((blockDelta * TIMING.BLOCK_MS) / 1000));
     const hours = Math.floor(totalSeconds / 3600);

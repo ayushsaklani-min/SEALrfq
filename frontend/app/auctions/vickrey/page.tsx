@@ -25,7 +25,7 @@ import {
 import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
-import { formatAmount, formatBlockTime, randomField, TIMING, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
+import { blockEta, formatAmount, formatBlockTime, randomField, TIMING, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
@@ -378,8 +378,8 @@ export default function VickreyAuctionsPage() {
                                             <DataGrid columns={2}>
                                                 <DataPoint label="Bid count" value={auction.bidCount || '0'} />
                                                 <DataPoint label="Revealed" value={auction.revealedCount || '0'} />
-                                                <DataPoint label="Bid close" value={auction.biddingDeadline ? `Block ${auction.biddingDeadline}` : '--'} />
-                                                <DataPoint label="Reveal close" value={auction.revealDeadline ? `Block ${auction.revealDeadline}` : '--'} />
+                                                <DataPoint label="Bid close" value={auction.biddingDeadline ? `Block ${auction.biddingDeadline}` : '--'} subtle={blockEta(auction.biddingDeadline, currentBlock)} />
+                                                <DataPoint label="Reveal close" value={auction.revealDeadline ? `Block ${auction.revealDeadline}` : '--'} subtle={blockEta(auction.revealDeadline, currentBlock)} />
                                             </DataGrid>
                                             <div className="grid gap-3 md:grid-cols-2">
                                                 <div className="rounded-xl border border-slate-200 bg-white p-3">

@@ -20,7 +20,7 @@ import {
     type WorkflowGuideStep,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
-import { formatAmount, PRICING_MODE, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
+import { blockEta, formatAmount, PRICING_MODE, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
@@ -237,8 +237,8 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
                             <DataPoint label="Live price" value={formatAmount(auction.currentPrice, auctionTokenType)} />
                             <DataPoint label="Start price" value={formatAmount(auction.startPrice, auctionTokenType)} />
                             <DataPoint label="Floor price" value={formatAmount(auction.reservePrice, auctionTokenType)} />
-                            <DataPoint label="Starts at" value={auction.startBlock ?? '--'} />
-                            <DataPoint label="Ends at" value={auction.endBlock ?? '--'} />
+                            <DataPoint label="Starts at" value={auction.startBlock ? `Block ${auction.startBlock}` : '--'} subtle={blockEta(auction.startBlock, auction.currentBlock)} />
+                            <DataPoint label="Ends at" value={auction.endBlock ? `Block ${auction.endBlock}` : '--'} subtle={blockEta(auction.endBlock, auction.currentBlock)} />
                             <DataPoint label="Final winner" value={auction.finalWinner || '--'} />
                             <DataPoint label="Final price" value={formatAmount(auction.finalPrice, auctionTokenType)} />
                         </DataGrid>

@@ -21,7 +21,7 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
-import { formatAmount, PRICING_MODE, tokenLabel, TOKEN_TYPE, randomField } from '@/lib/sealProtocol';
+import { blockEta, formatAmount, PRICING_MODE, tokenLabel, TOKEN_TYPE, randomField } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
@@ -359,8 +359,8 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
                             <DataPoint label="Creator" value={auction.creator ? <CopyableText value={auction.creator} displayValue={truncateMiddle(auction.creator, 14, 10)} /> : '--'} />
                             <DataPoint label="Bid count" value={auction.bidCount || '0'} />
                             <DataPoint label="Revealed" value={auction.revealedCount || '0'} />
-                            <DataPoint label="Bidding deadline" value={auction.biddingDeadline ? `Block ${auction.biddingDeadline}` : '--'} />
-                            <DataPoint label="Reveal deadline" value={auction.revealDeadline ? `Block ${auction.revealDeadline}` : '--'} />
+                            <DataPoint label="Bidding deadline" value={auction.biddingDeadline ? `Block ${auction.biddingDeadline}` : '--'} subtle={blockEta(auction.biddingDeadline, currentBlock)} />
+                            <DataPoint label="Reveal deadline" value={auction.revealDeadline ? `Block ${auction.revealDeadline}` : '--'} subtle={blockEta(auction.revealDeadline, currentBlock)} />
                             <DataPoint label="Minimum stake" value={formatAmount(auction.flatStake, TOKEN_TYPE.CREDITS)} />
                             <DataPoint label="Lowest bid" value={formatAmount(auction.lowestBid, auctionTokenType)} />
                             <DataPoint label="Second price" value={formatAmount(auction.secondLowestBid, auctionTokenType)} />

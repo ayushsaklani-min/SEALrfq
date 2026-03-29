@@ -19,7 +19,8 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { Button } from '@/components/ui/Button';
 import { authenticatedFetch } from '@/lib/authFetch';
-import { formatAmount, pricingLabel, tokenLabel } from '@/lib/sealProtocol';
+import { blockEta, formatAmount, pricingLabel, tokenLabel } from '@/lib/sealProtocol';
+import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { truncateMiddle } from '@/lib/utils';
 
 type RfqListItem = {
@@ -43,6 +44,7 @@ type RfqListItem = {
 
 export default function VendorOpenRfqsPage() {
     const [rfqs, setRfqs] = useState<RfqListItem[]>([]);
+    const [currentBlock, setCurrentBlock] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [search, setSearch] = useState('');
@@ -54,10 +56,16 @@ export default function VendorOpenRfqsPage() {
         let cancelled = false;
         const load = async () => {
             try {
-                const response = await authenticatedFetch('/api/rfq/all');
+                const [response, blockHeight] = await Promise.all([
+                    authenticatedFetch('/api/rfq/all'),
+                    fetchCurrentBlockHeight(),
+                ]);
                 const payload = await response.json();
                 if (!response.ok) throw new Error(payload?.error?.message || 'Failed to load open RFQs.');
-                if (!cancelled) setRfqs(payload.data || []);
+                if (!cancelled) {
+                    setRfqs(payload.data || []);
+                    setCurrentBlock(blockHeight);
+                }
             } catch (caught: any) {
                 if (!cancelled) setError(caught?.message || 'Failed to load open RFQs.');
             } finally {
@@ -200,10 +208,10 @@ export default function VendorOpenRfqsPage() {
                                     <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-300/70">Bid window</div>
                                     <div className="mt-2 space-y-1 text-xs text-white/55">
                                         <div>
-                                            Bid close: <span className="font-medium text-white/80">block {rfq.biddingDeadline}</span>
+                                            Bid close: <span className="font-medium text-white/80">{blockEta(rfq.biddingDeadline, currentBlock)}</span>
                                         </div>
                                         <div>
-                                            Reveal close: <span className="font-medium text-white/80">block {rfq.revealDeadline}</span>
+                                            Reveal close: <span className="font-medium text-white/80">{blockEta(rfq.revealDeadline, currentBlock)}</span>
                                         </div>
                                     </div>
                                     {rfq.status === 'OPEN' && (

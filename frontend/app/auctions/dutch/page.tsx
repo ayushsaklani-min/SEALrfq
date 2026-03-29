@@ -27,7 +27,7 @@ import {
 import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
-import { formatAmount, formatBlockTime, randomField, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
+import { blockEta, formatAmount, formatBlockTime, randomField, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 import { useProtocolStore } from '@/stores/protocolStore';
@@ -378,8 +378,8 @@ export default function DutchAuctionsPage() {
                                                             : '--'
                                                     }
                                                 />
-                                                <DataPoint label="Start block" value={auction.startBlock ? `Block ${auction.startBlock}` : '--'} />
-                                                <DataPoint label="End block" value={auction.endBlock ? `Block ${auction.endBlock}` : '--'} />
+                                                <DataPoint label="Start block" value={auction.startBlock ? `Block ${auction.startBlock}` : '--'} subtle={blockEta(auction.startBlock, currentBlock)} />
+                                                <DataPoint label="End block" value={auction.endBlock ? `Block ${auction.endBlock}` : '--'} subtle={blockEta(auction.endBlock, currentBlock)} />
                                             </DataGrid>
                                             <div className="grid gap-3 md:grid-cols-2">
                                                 <div className="rounded-xl border border-white/12 bg-white/[0.05] p-3">
