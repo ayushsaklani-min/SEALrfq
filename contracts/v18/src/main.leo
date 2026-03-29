@@ -1,3 +1,16 @@
+// SEAL RFQ v18 — B2B Zero-Knowledge Procurement Protocol
+//
+// This contract is written directly in Leo IR (Aleo Instructions).
+// During development, Leo's high-level compiler wasn't producing deployable output.
+// The Provable team's documented solution was to compile down to Aleo Instructions
+// manually and deploy via snarkOS built from source. That is exactly what we did.
+// The result: every register is explicit, every constraint is intentional, and there
+// is zero compiler indirection between what is written here and what the AVM executes.
+// Anyone auditing this contract reads exactly what runs on-chain — no build step required.
+//
+// Deployed on Aleo Testnet:
+// https://testnet.explorer.provable.com/program/sealrfq_v18.aleo
+
 import credits.aleo;
 import merkle_tree.aleo;
 import test_usdcx_multisig_core.aleo;
