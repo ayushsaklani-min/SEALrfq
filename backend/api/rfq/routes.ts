@@ -3,6 +3,7 @@ export {
     handleGetBids,
     handleGetMyRFQs,
     handleGetRFQ,
+    handleListAllRFQs,
     handleListOpenRFQs,
 } from './queryHandlers';
 export {

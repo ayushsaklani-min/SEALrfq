@@ -231,3 +231,12 @@ export async function handleListOpenRFQs(request: NextRequest) {
         data: enriched.filter((rfq) => currentBlock < rfq.biddingDeadline),
     });
 }
+
+export async function handleListAllRFQs(request: NextRequest) {
+    const auth = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    const rfqs = await prisma.rFQ.findMany({ orderBy: { createdAt: 'desc' } });
+    const enriched = await Promise.all(rfqs.map((rfq) => augmentRFQ(rfq)));
+    return NextResponse.json({ status: 'success', data: enriched });
+}

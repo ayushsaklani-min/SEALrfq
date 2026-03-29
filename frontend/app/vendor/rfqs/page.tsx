@@ -13,6 +13,7 @@ import {
     PageShell,
     PricingChip,
     SelectInput,
+    StatusChip,
     TextInput,
     TokenChip,
 } from '@/components/protocol/ProtocolPrimitives';
@@ -36,6 +37,8 @@ type RfqListItem = {
     bidCount?: string | null;
     minBidCount?: string | null;
     buyer?: string | null;
+    paid?: boolean;
+    winnerAccepted?: boolean;
 };
 
 export default function VendorOpenRfqsPage() {
@@ -43,6 +46,7 @@ export default function VendorOpenRfqsPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState('ALL');
     const [tokenFilter, setTokenFilter] = useState('ALL');
     const [pricingFilter, setPricingFilter] = useState('ALL');
 
@@ -50,7 +54,7 @@ export default function VendorOpenRfqsPage() {
         let cancelled = false;
         const load = async () => {
             try {
-                const response = await authenticatedFetch('/api/rfq/open');
+                const response = await authenticatedFetch('/api/rfq/all');
                 const payload = await response.json();
                 if (!response.ok) throw new Error(payload?.error?.message || 'Failed to load open RFQs.');
                 if (!cancelled) setRfqs(payload.data || []);
@@ -71,6 +75,7 @@ export default function VendorOpenRfqsPage() {
 
     const filtered = useMemo(() => {
         return rfqs.filter((rfq) => {
+            if (statusFilter !== 'ALL' && rfq.status !== statusFilter) return false;
             if (tokenFilter !== 'ALL' && String(rfq.tokenType) !== tokenFilter) return false;
             if (pricingFilter !== 'ALL' && String(rfq.pricingMode) !== pricingFilter) return false;
             if (search.trim()) {
@@ -84,14 +89,14 @@ export default function VendorOpenRfqsPage() {
             }
             return true;
         });
-    }, [rfqs, tokenFilter, pricingFilter, search]);
+    }, [rfqs, statusFilter, tokenFilter, pricingFilter, search]);
 
     return (
         <PageShell className="space-y-6">
             <PageHeader
                 eyebrow="Vendor"
-                title="Open RFQs"
-                description="Browse all active requests for quotation. Click any RFQ to review the details and place a sealed bid."
+                title="All RFQs"
+                description="Browse all requests for quotation. Open RFQs accept bids — click any card to view details and place a sealed bid."
                 actions={
                     <Link href="/vendor/my-bids">
                         <Button variant="secondary">My Bids</Button>
@@ -101,19 +106,31 @@ export default function VendorOpenRfqsPage() {
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
 
-            <DataGrid columns={3}>
-                <DataPoint label="Open for bids" value={rfqs.length} />
-                <DataPoint label="ALEO credits" value={rfqs.filter((r) => r.tokenType === 0).length} />
-                <DataPoint label="Stablecoin (USDCX / USAD)" value={rfqs.filter((r) => r.tokenType !== 0).length} />
+            <DataGrid columns={4}>
+                <DataPoint label="Total" value={rfqs.length} />
+                <DataPoint label="Open for bids" value={rfqs.filter((r) => r.status === 'OPEN').length} />
+                <DataPoint label="Completed" value={rfqs.filter((r) => r.status === 'COMPLETED').length} />
+                <DataPoint label="In settlement" value={rfqs.filter((r) => r.status === 'ESCROW_FUNDED').length} />
             </DataGrid>
 
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-4">
                 <Field label="Search">
                     <TextInput
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Item name, description, or RFQ ID..."
                     />
+                </Field>
+                <Field label="Status">
+                    <SelectInput value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                        <option value="ALL">All statuses</option>
+                        <option value="OPEN">Open — accepting bids</option>
+                        <option value="REVEAL">Reveal phase</option>
+                        <option value="WINNER_SELECTED">Winner selected</option>
+                        <option value="ESCROW_FUNDED">In settlement</option>
+                        <option value="COMPLETED">Completed</option>
+                        <option value="CANCELLED">Cancelled</option>
+                    </SelectInput>
                 </Field>
                 <Field label="Token">
                     <SelectInput value={tokenFilter} onChange={(e) => setTokenFilter(e.target.value)}>
@@ -164,6 +181,7 @@ export default function VendorOpenRfqsPage() {
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
+                                        <StatusChip status={rfq.status} />
                                         <TokenChip tokenType={rfq.tokenType} />
                                         <PricingChip pricingMode={rfq.pricingMode} />
                                     </div>
@@ -188,11 +206,13 @@ export default function VendorOpenRfqsPage() {
                                             Reveal close: <span className="font-medium text-white/80">block {rfq.revealDeadline}</span>
                                         </div>
                                     </div>
-                                    <div className="mt-3">
-                                        <span className="inline-flex items-center rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
-                                            Place bid →
-                                        </span>
-                                    </div>
+                                    {rfq.status === 'OPEN' && (
+                                        <div className="mt-3">
+                                            <span className="inline-flex items-center rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
+                                                Place bid →
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
