@@ -66,7 +66,7 @@ export default function Navbar() {
                   ]
                 : role === 'VENDOR'
                 ? [
-                    { name: 'Open RFQs', href: '/buyer/rfqs' },
+                    { name: 'Open RFQs', href: '/vendor/rfqs' },
                     { name: 'My Bids', href: '/vendor/my-bids' },
                   ]
                 : []),

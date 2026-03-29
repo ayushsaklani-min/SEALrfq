@@ -124,7 +124,7 @@ export default function BuyerRfqsPage() {
             {error ? <Notice tone="danger">{error}</Notice> : null}
             {isVendor ? (
                 <Notice tone="neutral" title="Viewing as Seller">
-                    You are currently in Seller mode. Use the lookup below to open any RFQ by ID, or go to your <a href="/vendor/my-bids" className="underline">Vendor dashboard</a> to browse open RFQs and place bids.
+                    You are currently in Seller mode. Use the lookup below to open any RFQ by ID, or go to <a href="/vendor/rfqs" className="underline">Open RFQs</a> to browse and place bids.
                 </Notice>
             ) : null}
 
