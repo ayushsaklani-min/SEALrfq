@@ -404,6 +404,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     const isCreator = walletAddress && escrow.creator && walletAddress === escrow.creator;
     const isWinner = walletAddress && escrow.winner && walletAddress === escrow.winner;
     const releasedSoFar = BigInt(escrow.releasedAmount);
+    const isFullySettled = escrow.status === 'COMPLETED' || BigInt(escrow.remainingAmount) === 0n;
     const requiredPrivateAmount = BigInt(escrow.winningAmount);
     // Normalize record balance field — credits use `microcredits`, stablecoins use `amount`
     const getRecordBalance = (record: any): bigint | null =>
@@ -455,8 +456,10 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             <PageHeader
                 eyebrow="Settlement"
                 eyebrowHref="/escrow"
-                title={`Escrow for ${escrow.rfqId}`}
-                description="Manage public releases, view settlement status, and handle timeout protection actions from one place."
+                title={`Escrow for ${truncateMiddle(escrow.rfqId, 16, 10)}`}
+                description={isFullySettled
+                    ? 'This escrow has been fully settled. Review the settlement details below.'
+                    : 'Manage public releases, view settlement status, and handle timeout protection actions from one place.'}
                 actions={
                     <ActionBar>
                         <StatusChip status={escrow.status} />
@@ -467,20 +470,28 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
-            {!escrow.paid && escrow.currentBlock < escrow.recoveryBlock ? (
-                <Notice tone="neutral" title="Recovery window not yet open">
-                    {escrow.pricingMode !== 0
-                        ? `This RFQ used a ${escrow.pricingMode === 1 ? 'Vickrey' : 'Dutch'} auction. After the auction result was imported, the escrow recovery window opens at block ${escrow.recoveryBlock} — ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} from now. Until then, settle via Path A (public release) or Path B (private invoice). Winner claim and creator reclaim unlock after that block.`
-                        : `The escrow recovery window opens at block ${escrow.recoveryBlock} — ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} from now. Winner claim and creator reclaim unlock after that block.`}
+            {isFullySettled ? (
+                <Notice tone="success" title="Settlement complete">
+                    This escrow has been fully settled. The winner was paid and the escrow bond has been recovered. No further actions are needed.
                 </Notice>
-            ) : null}
-            {escrow.settlementPathLocked ? (
-                <Notice title="Settlement path locked">
-                    {escrow.settlementPathLocked === 'PRIVATE_PAYMENT'
-                        ? 'Private payment has started, so public releases are disabled.'
-                        : 'Public releases have started, so the private invoice path is disabled.'}
-                </Notice>
-            ) : null}
+            ) : (
+                <>
+                    {!escrow.paid && escrow.currentBlock < escrow.recoveryBlock ? (
+                        <Notice tone="neutral" title="Recovery window not yet open">
+                            {escrow.pricingMode !== 0
+                                ? `This RFQ used a ${escrow.pricingMode === 1 ? 'Vickrey' : 'Dutch'} auction. After the auction result was imported, the escrow recovery window opens at block ${escrow.recoveryBlock} — ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} from now. Until then, settle via Path A (public release) or Path B (private invoice). Winner claim and creator reclaim unlock after that block.`
+                                : `The escrow recovery window opens at block ${escrow.recoveryBlock} — ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} from now. Winner claim and creator reclaim unlock after that block.`}
+                        </Notice>
+                    ) : null}
+                    {escrow.settlementPathLocked ? (
+                        <Notice title="Settlement path locked">
+                            {escrow.settlementPathLocked === 'PRIVATE_PAYMENT'
+                                ? 'Private payment has been made. Complete the escrow bond recovery below to finish settlement.'
+                                : 'Public releases have started, so the private invoice path is disabled.'}
+                        </Notice>
+                    ) : null}
+                </>
+            )}
 
             <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
                 {/* ── Left column ── */}
@@ -491,21 +502,79 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                             <DataPoint label="Winning amount" value={formatAmount(escrow.winningAmount, escrow.tokenType)} />
                             <DataPoint label="Released so far" value={formatAmount(escrow.releasedAmount, escrow.tokenType)} />
                             <DataPoint label="Remaining" value={formatAmount(escrow.remainingAmount, escrow.tokenType)} />
-                            <DataPoint label="Current block" value={escrow.currentBlock} subtle="Live Aleo network block height." />
-                            <DataPoint
-                                label="Recovery window opens"
-                                value={escrow.currentBlock >= escrow.recoveryBlock ? 'Open now' : blockEta(escrow.recoveryBlock, escrow.currentBlock)}
-                                subtle={`Block ${escrow.recoveryBlock} — winner claim & creator reclaim unlock here.`}
-                            />
-                            <DataPoint
-                                label="Escrow timeout"
-                                value={escrow.currentBlock >= escrow.timeoutBlock ? 'Passed' : blockEta(escrow.timeoutBlock, escrow.currentBlock)}
-                                subtle={`Block ${escrow.timeoutBlock} — cancel-for-missing-escrow window.`}
-                            />
+                            {!isFullySettled ? (
+                                <>
+                                    <DataPoint label="Current block" value={escrow.currentBlock} subtle="Live Aleo network block height." />
+                                    <DataPoint
+                                        label="Recovery window"
+                                        value={escrow.currentBlock >= escrow.recoveryBlock ? 'Open now' : blockEta(escrow.recoveryBlock, escrow.currentBlock)}
+                                        subtle={`Block ${escrow.recoveryBlock} — winner claim & creator reclaim unlock here.`}
+                                    />
+                                    <DataPoint
+                                        label="Escrow timeout"
+                                        value={escrow.currentBlock >= escrow.timeoutBlock ? 'Passed' : blockEta(escrow.timeoutBlock, escrow.currentBlock)}
+                                        subtle={`Block ${escrow.timeoutBlock} — cancel-for-missing-escrow window.`}
+                                    />
+                                </>
+                            ) : null}
                         </DataGrid>
                     </Panel>
 
-                    {/* Settlement paths — tabbed */}
+                    {/* Settlement guide — always visible */}
+                    <Panel
+                        title="How settlement works"
+                        subtitle="Follow these steps to complete settlement and recover your escrow."
+                    >
+                        <div className="space-y-3">
+                            {[
+                                {
+                                    step: '1',
+                                    title: 'Winner is selected',
+                                    desc: 'After bidding and reveal close, the buyer selects a winner (or imports the result from a Vickrey / Dutch auction).',
+                                    done: true,
+                                },
+                                {
+                                    step: '2',
+                                    title: 'Escrow is funded',
+                                    desc: 'The buyer funds the winning amount into the on-chain escrow contract.',
+                                    done: true,
+                                },
+                                {
+                                    step: '3',
+                                    title: 'Pay the winner',
+                                    desc: escrow.paid
+                                        ? 'Winner was paid via private invoice (Path B). Payment confirmed on-chain.'
+                                        : releasedSoFar > 0n
+                                          ? 'Partial public releases in progress (Path A).'
+                                          : 'Choose Path A (public release) or Path B (private invoice) below to pay the winner.',
+                                    done: escrow.paid || isFullySettled,
+                                },
+                                {
+                                    step: '4',
+                                    title: 'Recover escrow bond',
+                                    desc: escrow.paid
+                                        ? isFullySettled
+                                            ? 'Escrow bond recovered. Settlement is complete.'
+                                            : 'After private payment, use "Recover escrow bond" in the panel on the right to get your locked tokens back.'
+                                        : 'After full public release, the escrow closes automatically. Or if unpaid, creator reclaim / winner claim open after the recovery window.',
+                                    done: isFullySettled,
+                                },
+                            ].map((item) => (
+                                <div key={item.step} className="flex gap-3">
+                                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${item.done ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/[0.08] text-white/40'}`}>
+                                        {item.done ? '✓' : item.step}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className={`text-sm font-medium ${item.done ? 'text-emerald-200' : 'text-white'}`}>{item.title}</div>
+                                        <div className="text-xs leading-5 text-white/50">{item.desc}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </Panel>
+
+                    {/* Settlement paths — tabbed (hidden when fully settled) */}
+                    {!isFullySettled ? (
                     <Panel title="Settlement path">
                         {/* Tab bar */}
                         <div className="mb-5 flex gap-1 rounded-xl bg-white/[0.06] p-1">
@@ -692,11 +761,12 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         )}
 
                     </Panel>
+                    ) : null}
                 </div>
 
                 {/* ── Right column ── */}
                 <div className="space-y-6">
-                    <Panel title="Roles and timeout actions">
+                    <Panel title={isFullySettled ? 'Settlement details' : 'Roles and timeout actions'}>
                         <InfoList>
                             <InfoRow
                                 label="Creator"
@@ -710,36 +780,44 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                             <InfoRow label="Private payment" value={escrow.paid ? 'Complete' : 'Pending'} />
                             <InfoRow label="Settlement mode" value={settlementActionMode} />
                         </InfoList>
-                        <ActionBar className="mt-4">
-                            {escrow.paid ? (
-                                <Button disabled={!isCreator || !escrow.canRecoverBond || acting} isLoading={acting} onClick={() => setConfirm({ kind: 'recoverBond' })}>
-                                    Recover escrow bond
-                                </Button>
-                            ) : (
-                                <>
-                                    <Button disabled={!isWinner || !escrow.canWinnerClaim || acting} isLoading={acting} onClick={() => setConfirm({ kind: 'winnerClaim' })}>
-                                        Claim escrow
-                                    </Button>
-                                    <Button
-                                        variant="secondary"
-                                        disabled={!isCreator || !escrow.canCreatorReclaim || acting}
-                                        isLoading={acting}
-                                        onClick={() => setConfirm({ kind: 'creatorReclaim' })}
-                                    >
-                                        Creator reclaim
-                                    </Button>
-                                </>
-                            )}
-                        </ActionBar>
-                        <div className="mt-3 text-sm text-white/55">
-                            {escrow.paid && escrow.canRecoverBond
-                                ? 'Private payment confirmed. You can now recover the remaining escrow bond.'
-                                : escrow.paid && !escrow.canRecoverBond
-                                  ? 'Private payment recorded, but there is no remaining escrow balance to recover.'
-                                  : escrow.currentBlock < escrow.recoveryBlock
-                                    ? `Recovery window opens ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} (block ${escrow.recoveryBlock}). Winner claim and creator reclaim unlock after that point.`
-                                    : 'Recovery window is open. Use winner claim or creator reclaim — these actions are only available when the private invoice path was not used.'}
-                        </div>
+                        {!isFullySettled ? (
+                            <>
+                                <ActionBar className="mt-4">
+                                    {escrow.paid ? (
+                                        <Button disabled={!isCreator || !escrow.canRecoverBond || acting} isLoading={acting} onClick={() => setConfirm({ kind: 'recoverBond' })}>
+                                            Recover escrow bond
+                                        </Button>
+                                    ) : (
+                                        <>
+                                            <Button disabled={!isWinner || !escrow.canWinnerClaim || acting} isLoading={acting} onClick={() => setConfirm({ kind: 'winnerClaim' })}>
+                                                Claim escrow
+                                            </Button>
+                                            <Button
+                                                variant="secondary"
+                                                disabled={!isCreator || !escrow.canCreatorReclaim || acting}
+                                                isLoading={acting}
+                                                onClick={() => setConfirm({ kind: 'creatorReclaim' })}
+                                            >
+                                                Creator reclaim
+                                            </Button>
+                                        </>
+                                    )}
+                                </ActionBar>
+                                <div className="mt-3 text-sm text-white/55">
+                                    {escrow.paid && escrow.canRecoverBond
+                                        ? 'Private payment confirmed. You can now recover the remaining escrow bond.'
+                                        : escrow.paid && !escrow.canRecoverBond
+                                          ? 'Private payment recorded, but there is no remaining escrow balance to recover.'
+                                          : escrow.currentBlock < escrow.recoveryBlock
+                                            ? `Recovery window opens ${blockEta(escrow.recoveryBlock, escrow.currentBlock)} (block ${escrow.recoveryBlock}). Winner claim and creator reclaim unlock after that point.`
+                                            : 'Recovery window is open. Use winner claim or creator reclaim — these actions are only available when the private invoice path was not used.'}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-4 py-3 text-sm text-emerald-200">
+                                All settlement actions are complete. The winner has been paid and the escrow bond has been returned to the creator.
+                            </div>
+                        )}
                     </Panel>
 
                     {hasReceiptArtifact ? (
