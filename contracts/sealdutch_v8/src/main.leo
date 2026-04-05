@@ -1,4 +1,10 @@
 import credits.aleo;
+import test_usdcx_multisig_core.aleo;
+import test_usdcx_freezelist.aleo;
+import test_usdcx_stablecoin.aleo;
+import test_usad_multisig_core.aleo;
+import test_usad_freezelist.aleo;
+import test_usad_stablecoin.aleo;
 
 program sealdutch_v8.aleo {
 
@@ -177,6 +183,7 @@ program sealdutch_v8.aleo {
         transfer_future: Future,
     ) {
         assert_eq(Mapping::get(auction_status, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_token_type, auction_id), 0u8);
         let start_block: u32 = Mapping::get(auction_start_block, auction_id);
         let end_block: u32 = Mapping::get(auction_end_block, auction_id);
         assert(block.height >= start_block);
@@ -354,6 +361,201 @@ program sealdutch_v8.aleo {
         key_hash: field,
         transfer_future: Future,
     ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 0u8);
+        let status: u8 = Mapping::get(auction_status, auction_id);
+        assert(status != 1u8);
+        assert(status != 0u8);
+        let stake: u64 = Mapping::get_or_use(commit_stakes, key_hash, 0u64);
+        assert(stake > 0u64);
+        Mapping::set(commit_stakes, key_hash, 0u64);
+        transfer_future.await();
+    }
+
+    // ── USDCx staking variants ──────────────────────────────────────────────
+
+    async transition commit_accept_usdcx(
+        public auction_id: field,
+               salt: field,
+    ) -> (AcceptCommitted, Future) {
+        assert(auction_id != 0field);
+        assert(salt != 0field);
+        let commit_hash: field = BHP256::hash_to_field(AcceptCommitInput {
+            auction_id: auction_id,
+            acceptor: self.caller,
+            salt: salt,
+        });
+        let key_hash: field = BHP256::hash_to_field(AcceptorKey {
+            auction_id: auction_id,
+            acceptor: self.caller,
+        });
+        let transfer_future: Future = test_usdcx_stablecoin.aleo/transfer_public_as_signer(self.address, 10000u64);
+        let out: AcceptCommitted = AcceptCommitted {
+            owner: self.caller,
+            auction_id: auction_id,
+            acceptor: self.caller,
+        };
+        let f: Future = finalize_commit_accept_usdcx(auction_id, key_hash, commit_hash, self.caller, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_commit_accept_usdcx(
+        auction_id: field,
+        key_hash: field,
+        commit_hash: field,
+        acceptor: address,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_status, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_token_type, auction_id), 1u8);
+        let start_block: u32 = Mapping::get(auction_start_block, auction_id);
+        let end_block: u32 = Mapping::get(auction_end_block, auction_id);
+        assert(block.height >= start_block);
+        assert(block.height <= end_block);
+        let existing_commitment: field = Mapping::get_or_use(accept_commitments, key_hash, 0field);
+        let existing_commit_block: u32 = Mapping::get_or_use(accept_commit_block, key_hash, 0u32);
+        let no_commitment: bool = existing_commitment == 0field;
+        let can_replace: bool = existing_commit_block > 0u32 && block.height > existing_commit_block + 10u32;
+        assert(no_commitment || can_replace);
+        transfer_future.await();
+        Mapping::set(accept_commitments, key_hash, commit_hash);
+        Mapping::set(accept_commit_block, key_hash, block.height);
+        Mapping::set(commit_stakes, key_hash, 10000u64);
+        let first_commit: u32 = Mapping::get_or_use(first_commit_block, auction_id, 4294967295u32);
+        let best_addr: address = Mapping::get_or_use(best_acceptor, auction_id, aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc);
+        let best_hash: field = Mapping::get_or_use(best_commit_hash, auction_id, 0field);
+        let no_acceptor: bool = best_addr == aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc;
+        let old_acceptor: bool = !no_acceptor && block.height > first_commit + 10u32;
+        let earlier_block: bool = block.height < first_commit;
+        let same_block_lower_hash: bool = block.height == first_commit && commit_hash < best_hash;
+        let should_update: bool = no_acceptor || old_acceptor || earlier_block || same_block_lower_hash;
+        if should_update {
+            Mapping::set(first_commit_block, auction_id, block.height);
+            Mapping::set(best_acceptor, auction_id, acceptor);
+            Mapping::set(best_commit_hash, auction_id, commit_hash);
+        }
+    }
+
+    async transition refund_commit_stake_usdcx(
+        public auction_id: field,
+    ) -> (CommitStakeRefunded, Future) {
+        assert(auction_id != 0field);
+        let key_hash: field = BHP256::hash_to_field(AcceptorKey {
+            auction_id: auction_id,
+            acceptor: self.caller,
+        });
+        let transfer_future: Future = test_usdcx_stablecoin.aleo/transfer_public(self.caller, 10000u64);
+        let out: CommitStakeRefunded = CommitStakeRefunded {
+            owner: self.caller,
+            auction_id: auction_id,
+            amount: 10000u64,
+        };
+        let f: Future = finalize_refund_commit_stake_usdcx(auction_id, key_hash, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_refund_commit_stake_usdcx(
+        auction_id: field,
+        key_hash: field,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 1u8);
+        let status: u8 = Mapping::get(auction_status, auction_id);
+        assert(status != 1u8);
+        assert(status != 0u8);
+        let stake: u64 = Mapping::get_or_use(commit_stakes, key_hash, 0u64);
+        assert(stake > 0u64);
+        Mapping::set(commit_stakes, key_hash, 0u64);
+        transfer_future.await();
+    }
+
+    // ── USAD staking variants ───────────────────────────────────────────────
+
+    async transition commit_accept_usad(
+        public auction_id: field,
+               salt: field,
+    ) -> (AcceptCommitted, Future) {
+        assert(auction_id != 0field);
+        assert(salt != 0field);
+        let commit_hash: field = BHP256::hash_to_field(AcceptCommitInput {
+            auction_id: auction_id,
+            acceptor: self.caller,
+            salt: salt,
+        });
+        let key_hash: field = BHP256::hash_to_field(AcceptorKey {
+            auction_id: auction_id,
+            acceptor: self.caller,
+        });
+        let transfer_future: Future = test_usad_stablecoin.aleo/transfer_public_as_signer(self.address, 10000u64);
+        let out: AcceptCommitted = AcceptCommitted {
+            owner: self.caller,
+            auction_id: auction_id,
+            acceptor: self.caller,
+        };
+        let f: Future = finalize_commit_accept_usad(auction_id, key_hash, commit_hash, self.caller, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_commit_accept_usad(
+        auction_id: field,
+        key_hash: field,
+        commit_hash: field,
+        acceptor: address,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_status, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_token_type, auction_id), 2u8);
+        let start_block: u32 = Mapping::get(auction_start_block, auction_id);
+        let end_block: u32 = Mapping::get(auction_end_block, auction_id);
+        assert(block.height >= start_block);
+        assert(block.height <= end_block);
+        let existing_commitment: field = Mapping::get_or_use(accept_commitments, key_hash, 0field);
+        let existing_commit_block: u32 = Mapping::get_or_use(accept_commit_block, key_hash, 0u32);
+        let no_commitment: bool = existing_commitment == 0field;
+        let can_replace: bool = existing_commit_block > 0u32 && block.height > existing_commit_block + 10u32;
+        assert(no_commitment || can_replace);
+        transfer_future.await();
+        Mapping::set(accept_commitments, key_hash, commit_hash);
+        Mapping::set(accept_commit_block, key_hash, block.height);
+        Mapping::set(commit_stakes, key_hash, 10000u64);
+        let first_commit: u32 = Mapping::get_or_use(first_commit_block, auction_id, 4294967295u32);
+        let best_addr: address = Mapping::get_or_use(best_acceptor, auction_id, aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc);
+        let best_hash: field = Mapping::get_or_use(best_commit_hash, auction_id, 0field);
+        let no_acceptor: bool = best_addr == aleo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3ljyzc;
+        let old_acceptor: bool = !no_acceptor && block.height > first_commit + 10u32;
+        let earlier_block: bool = block.height < first_commit;
+        let same_block_lower_hash: bool = block.height == first_commit && commit_hash < best_hash;
+        let should_update: bool = no_acceptor || old_acceptor || earlier_block || same_block_lower_hash;
+        if should_update {
+            Mapping::set(first_commit_block, auction_id, block.height);
+            Mapping::set(best_acceptor, auction_id, acceptor);
+            Mapping::set(best_commit_hash, auction_id, commit_hash);
+        }
+    }
+
+    async transition refund_commit_stake_usad(
+        public auction_id: field,
+    ) -> (CommitStakeRefunded, Future) {
+        assert(auction_id != 0field);
+        let key_hash: field = BHP256::hash_to_field(AcceptorKey {
+            auction_id: auction_id,
+            acceptor: self.caller,
+        });
+        let transfer_future: Future = test_usad_stablecoin.aleo/transfer_public(self.caller, 10000u64);
+        let out: CommitStakeRefunded = CommitStakeRefunded {
+            owner: self.caller,
+            auction_id: auction_id,
+            amount: 10000u64,
+        };
+        let f: Future = finalize_refund_commit_stake_usad(auction_id, key_hash, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_refund_commit_stake_usad(
+        auction_id: field,
+        key_hash: field,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 2u8);
         let status: u8 = Mapping::get(auction_status, auction_id);
         assert(status != 1u8);
         assert(status != 0u8);

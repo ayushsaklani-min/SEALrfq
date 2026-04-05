@@ -241,11 +241,15 @@ export async function handleVickreyCommitBid(request: NextRequest, auctionId: st
 
         const bidId = data.bidId ?? randomField();
         if (!data.txHash) {
+            const tokenType = auction.tokenType ?? TOKEN_TYPE.CREDITS;
+            const commitFn = tokenType === TOKEN_TYPE.USDCX ? 'commit_bid_usdcx'
+                : tokenType === TOKEN_TYPE.USAD ? 'commit_bid_usad'
+                : 'commit_bid';
             const tx: AleoTransaction = {
                 program: PROGRAM_IDS.vickrey,
-                function: 'commit_bid',
+                function: commitFn,
                 inputs: [auctionId, `${data.bidAmount}u64`, data.salt, `${data.stake}u64`, bidId],
-                fee: estimateFee('commit_bid'),
+                fee: estimateFee(commitFn),
             };
             const prepared = await prepareAuctionTx(tx, 'vickrey_commit', `vickrey:commit:${auctionId}:${bidId}`);
             return NextResponse.json({ status: 'success', data: { bidId, tx: prepared } });
@@ -403,11 +407,16 @@ export async function handleDutchCommitAccept(request: NextRequest, auctionId: s
     try {
         const data = DutchAcceptSchema.parse(await request.json());
         if (!data.txHash) {
+            const auction = await getAuctionState('dutch', auctionId);
+            const tokenType = auction.tokenType ?? TOKEN_TYPE.CREDITS;
+            const commitFn = tokenType === TOKEN_TYPE.USDCX ? 'commit_accept_usdcx'
+                : tokenType === TOKEN_TYPE.USAD ? 'commit_accept_usad'
+                : 'commit_accept';
             const tx: AleoTransaction = {
                 program: PROGRAM_IDS.dutch,
-                function: 'commit_accept',
+                function: commitFn,
                 inputs: [auctionId, data.salt],
-                fee: estimateFee('commit_accept'),
+                fee: estimateFee(commitFn),
             };
             const prepared = await prepareAuctionTx(tx, 'dutch_commit', `dutch:commit_accept:${auctionId}`);
             return NextResponse.json({ status: 'success', data: { tx: prepared } });

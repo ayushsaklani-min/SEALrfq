@@ -337,7 +337,7 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
                 eyebrow="Vickrey Auctions"
                 eyebrowHref="/auctions/vickrey"
                 title={`Vickrey ${params.auctionId}`}
-                description={`Commit sealed bids, reveal them, finalize the result, then import it into the linked RFQ. Bid prices use ${tokenLabel(auctionTokenType)}. Stake remains ALEO credits.`}
+                description={`Commit sealed bids, reveal them, finalize the result, then import it into the linked RFQ. Bid prices and stake use ${tokenLabel(auctionTokenType)}.`}
                 actions={<TokenChip tokenType={auction.tokenType} label={auction.tokenSymbol || undefined} />}
             />
 
@@ -362,7 +362,7 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
                             <DataPoint label="Revealed" value={auction.revealedCount || '0'} />
                             <DataPoint label="Bidding deadline" value={auction.biddingDeadline ? `Block ${auction.biddingDeadline}` : '--'} subtle={blockEta(auction.biddingDeadline, currentBlock)} />
                             <DataPoint label="Reveal deadline" value={auction.revealDeadline ? `Block ${auction.revealDeadline}` : '--'} subtle={blockEta(auction.revealDeadline, currentBlock)} />
-                            <DataPoint label="Minimum stake" value={formatAmount(auction.flatStake, TOKEN_TYPE.CREDITS)} />
+                            <DataPoint label="Minimum stake" value={formatAmount(auction.flatStake, auctionTokenType)} />
                             <DataPoint label="Lowest bid" value={formatAmount(auction.lowestBid, auctionTokenType)} />
                             <DataPoint label="Second price" value={formatAmount(auction.secondLowestBid, auctionTokenType)} />
                             <DataPoint label="Final winner" value={auction.finalWinner || '--'} />
@@ -387,7 +387,7 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
                                 <Field label={`Commit amount (${tokenLabel(auctionTokenType)})`} hint="Enter a human-readable amount. The form converts it to on-chain micro-units automatically.">
                                     <TextInput type="number" min="0.000001" step="0.000001" value={commitAmount} onChange={(event) => setCommitAmount(event.target.value)} placeholder="1.0" disabled={!commitOpen} />
                                 </Field>
-                                <Field label="Required stake (ALEO credits)" hint="Calculated automatically from the higher of the auction minimum stake and 10% of your bid.">
+                                <Field label={`Required stake (${tokenLabel(auctionTokenType)})`} hint="Calculated automatically from the higher of the auction minimum stake and 10% of your bid.">
                                     <TextInput value={requiredCommitStakeDisplay} readOnly placeholder="Calculated automatically" />
                                 </Field>
                                 <Field label="Salt">

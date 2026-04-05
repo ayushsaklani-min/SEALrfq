@@ -1,4 +1,10 @@
 import credits.aleo;
+import test_usdcx_multisig_core.aleo;
+import test_usdcx_freezelist.aleo;
+import test_usdcx_stablecoin.aleo;
+import test_usad_multisig_core.aleo;
+import test_usad_freezelist.aleo;
+import test_usad_stablecoin.aleo;
 
 program sealvickrey_v8.aleo {
 
@@ -217,6 +223,7 @@ program sealvickrey_v8.aleo {
         transfer_future: Future,
     ) {
         assert_eq(Mapping::get(auction_status, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_token_type, auction_id), 0u8);
         let bidding_deadline: u32 = Mapping::get(auction_bidding_deadlines, auction_id);
         assert(block.height < bidding_deadline);
         let flat_stake: u64 = Mapping::get(auction_flat_stake, auction_id);
@@ -398,6 +405,7 @@ program sealvickrey_v8.aleo {
         amount: u64,
         transfer_future: Future,
     ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 0u8);
         let status: u8 = Mapping::get(auction_status, auction_id);
         let is_cancelled: bool = status == 4u8;
         let is_finalized: bool = status == 3u8;
@@ -442,6 +450,323 @@ program sealvickrey_v8.aleo {
         amount: u64,
         transfer_future: Future,
     ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 0u8);
+        assert_eq(Mapping::get(auction_creators, auction_id), caller);
+        let status: u8 = Mapping::get(auction_status, auction_id);
+        assert(status == 2u8 || status == 3u8);
+        let reveal_deadline: u32 = Mapping::get(auction_reveal_deadlines, auction_id);
+        assert(block.height > reveal_deadline);
+        assert(block.height <= reveal_deadline + 1440u32);
+        let stored_commitment: field = Mapping::get_or_use(bid_commitments, bid_key_hash, 0field);
+        assert(stored_commitment != 0field);
+        assert_eq(Mapping::get_or_use(revealed_bids, bid_key_hash, 0u64), 0u64);
+        let stored_stake: u64 = Mapping::get_or_use(bid_stakes, bid_key_hash, 0u64);
+        assert_eq(amount, stored_stake);
+        assert(amount > 0u64);
+        Mapping::set(bid_stakes, bid_key_hash, 0u64);
+        transfer_future.await();
+    }
+
+    // ── USDCx staking variants ──────────────────────────────────────────────
+
+    async transition commit_bid_usdcx(
+        public auction_id: field,
+               amount: u64,
+               salt: field,
+        public stake: u64,
+        public bid_id: field,
+    ) -> (BidCommitted, Future) {
+        assert(auction_id != 0field);
+        assert(bid_id != 0field);
+        assert(amount > 0u64);
+        assert(amount < 18446744073709551615u64);
+        assert(stake > 0u64);
+        assert(salt != 0field);
+        let commitment: field = BHP256::hash_to_field(CommitmentInput {
+            auction_id: auction_id,
+            bidder: self.caller,
+            amount: amount,
+            salt: salt,
+        });
+        let bid_key_hash: field = BHP256::hash_to_field(BidKey {
+            auction_id: auction_id,
+            bid_id: bid_id,
+        });
+        let vendor_key_hash: field = BHP256::hash_to_field(VendorAuctionKey {
+            vendor: self.caller,
+            auction_id: auction_id,
+        });
+        let transfer_future: Future = test_usdcx_stablecoin.aleo/transfer_public_as_signer(self.address, stake);
+        let out: BidCommitted = BidCommitted {
+            owner: self.caller,
+            auction_id: auction_id,
+            bid_id: bid_id,
+            vendor: self.caller,
+            stake: stake,
+        };
+        let f: Future = finalize_commit_bid_usdcx(auction_id, bid_key_hash, commitment, stake, self.caller, vendor_key_hash, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_commit_bid_usdcx(
+        auction_id: field,
+        bid_key_hash: field,
+        commitment: field,
+        stake: u64,
+        bidder: address,
+        vendor_key_hash: field,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_status, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_token_type, auction_id), 1u8);
+        let bidding_deadline: u32 = Mapping::get(auction_bidding_deadlines, auction_id);
+        assert(block.height < bidding_deadline);
+        let flat_stake: u64 = Mapping::get(auction_flat_stake, auction_id);
+        assert(stake >= flat_stake);
+        assert_eq(Mapping::get_or_use(bid_commitments, bid_key_hash, 0field), 0field);
+        assert_eq(Mapping::get_or_use(vendor_bid_count, vendor_key_hash, 0u64), 0u64);
+        transfer_future.await();
+        Mapping::set(bid_commitments, bid_key_hash, commitment);
+        Mapping::set(bid_owners, bid_key_hash, bidder);
+        Mapping::set(bid_stakes, bid_key_hash, stake);
+        Mapping::set(vendor_bid_count, vendor_key_hash, 1u64);
+        let bid_count: u64 = Mapping::get_or_use(auction_bid_count, auction_id, 0u64);
+        Mapping::set(auction_bid_count, auction_id, bid_count + 1u64);
+    }
+
+    async transition refund_stake_usdcx(
+        public auction_id: field,
+        public bid_id: field,
+        public amount: u64,
+    ) -> (StakeRefunded, Future) {
+        assert(auction_id != 0field);
+        assert(bid_id != 0field);
+        let bid_key_hash: field = BHP256::hash_to_field(BidKey {
+            auction_id: auction_id,
+            bid_id: bid_id,
+        });
+        let transfer_future: Future = test_usdcx_stablecoin.aleo/transfer_public(self.caller, amount);
+        let out: StakeRefunded = StakeRefunded {
+            owner: self.caller,
+            auction_id: auction_id,
+            bid_id: bid_id,
+            amount: amount,
+        };
+        let f: Future = finalize_refund_stake_usdcx(auction_id, bid_key_hash, self.caller, amount, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_refund_stake_usdcx(
+        auction_id: field,
+        bid_key_hash: field,
+        caller: address,
+        amount: u64,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 1u8);
+        let status: u8 = Mapping::get(auction_status, auction_id);
+        let is_cancelled: bool = status == 4u8;
+        let is_finalized: bool = status == 3u8;
+        assert(is_cancelled || is_finalized);
+        assert_eq(Mapping::get(bid_owners, bid_key_hash), caller);
+        let stored_stake: u64 = Mapping::get_or_use(bid_stakes, bid_key_hash, 0u64);
+        assert_eq(amount, stored_stake);
+        assert(amount > 0u64);
+        let revealed_amount: u64 = Mapping::get_or_use(revealed_bids, bid_key_hash, 0u64);
+        let did_reveal: bool = revealed_amount > 0u64;
+        assert(is_cancelled || did_reveal);
+        Mapping::set(bid_stakes, bid_key_hash, 0u64);
+        transfer_future.await();
+    }
+
+    async transition slash_unrevealed_usdcx(
+        public auction_id: field,
+        public bid_id: field,
+        public amount: u64,
+    ) -> (StakeSlashed, Future) {
+        assert(auction_id != 0field);
+        assert(bid_id != 0field);
+        let bid_key_hash: field = BHP256::hash_to_field(BidKey {
+            auction_id: auction_id,
+            bid_id: bid_id,
+        });
+        let transfer_future: Future = test_usdcx_stablecoin.aleo/transfer_public(self.caller, amount);
+        let out: StakeSlashed = StakeSlashed {
+            owner: self.caller,
+            auction_id: auction_id,
+            bid_id: bid_id,
+            amount: amount,
+        };
+        let f: Future = finalize_slash_unrevealed_usdcx(auction_id, bid_key_hash, self.caller, amount, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_slash_unrevealed_usdcx(
+        auction_id: field,
+        bid_key_hash: field,
+        caller: address,
+        amount: u64,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_creators, auction_id), caller);
+        let status: u8 = Mapping::get(auction_status, auction_id);
+        assert(status == 2u8 || status == 3u8);
+        let reveal_deadline: u32 = Mapping::get(auction_reveal_deadlines, auction_id);
+        assert(block.height > reveal_deadline);
+        assert(block.height <= reveal_deadline + 1440u32);
+        let stored_commitment: field = Mapping::get_or_use(bid_commitments, bid_key_hash, 0field);
+        assert(stored_commitment != 0field);
+        assert_eq(Mapping::get_or_use(revealed_bids, bid_key_hash, 0u64), 0u64);
+        let stored_stake: u64 = Mapping::get_or_use(bid_stakes, bid_key_hash, 0u64);
+        assert_eq(amount, stored_stake);
+        assert(amount > 0u64);
+        Mapping::set(bid_stakes, bid_key_hash, 0u64);
+        transfer_future.await();
+    }
+
+    // ── USAD staking variants ───────────────────────────────────────────────
+
+    async transition commit_bid_usad(
+        public auction_id: field,
+               amount: u64,
+               salt: field,
+        public stake: u64,
+        public bid_id: field,
+    ) -> (BidCommitted, Future) {
+        assert(auction_id != 0field);
+        assert(bid_id != 0field);
+        assert(amount > 0u64);
+        assert(amount < 18446744073709551615u64);
+        assert(stake > 0u64);
+        assert(salt != 0field);
+        let commitment: field = BHP256::hash_to_field(CommitmentInput {
+            auction_id: auction_id,
+            bidder: self.caller,
+            amount: amount,
+            salt: salt,
+        });
+        let bid_key_hash: field = BHP256::hash_to_field(BidKey {
+            auction_id: auction_id,
+            bid_id: bid_id,
+        });
+        let vendor_key_hash: field = BHP256::hash_to_field(VendorAuctionKey {
+            vendor: self.caller,
+            auction_id: auction_id,
+        });
+        let transfer_future: Future = test_usad_stablecoin.aleo/transfer_public_as_signer(self.address, stake);
+        let out: BidCommitted = BidCommitted {
+            owner: self.caller,
+            auction_id: auction_id,
+            bid_id: bid_id,
+            vendor: self.caller,
+            stake: stake,
+        };
+        let f: Future = finalize_commit_bid_usad(auction_id, bid_key_hash, commitment, stake, self.caller, vendor_key_hash, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_commit_bid_usad(
+        auction_id: field,
+        bid_key_hash: field,
+        commitment: field,
+        stake: u64,
+        bidder: address,
+        vendor_key_hash: field,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_status, auction_id), 1u8);
+        assert_eq(Mapping::get(auction_token_type, auction_id), 2u8);
+        let bidding_deadline: u32 = Mapping::get(auction_bidding_deadlines, auction_id);
+        assert(block.height < bidding_deadline);
+        let flat_stake: u64 = Mapping::get(auction_flat_stake, auction_id);
+        assert(stake >= flat_stake);
+        assert_eq(Mapping::get_or_use(bid_commitments, bid_key_hash, 0field), 0field);
+        assert_eq(Mapping::get_or_use(vendor_bid_count, vendor_key_hash, 0u64), 0u64);
+        transfer_future.await();
+        Mapping::set(bid_commitments, bid_key_hash, commitment);
+        Mapping::set(bid_owners, bid_key_hash, bidder);
+        Mapping::set(bid_stakes, bid_key_hash, stake);
+        Mapping::set(vendor_bid_count, vendor_key_hash, 1u64);
+        let bid_count: u64 = Mapping::get_or_use(auction_bid_count, auction_id, 0u64);
+        Mapping::set(auction_bid_count, auction_id, bid_count + 1u64);
+    }
+
+    async transition refund_stake_usad(
+        public auction_id: field,
+        public bid_id: field,
+        public amount: u64,
+    ) -> (StakeRefunded, Future) {
+        assert(auction_id != 0field);
+        assert(bid_id != 0field);
+        let bid_key_hash: field = BHP256::hash_to_field(BidKey {
+            auction_id: auction_id,
+            bid_id: bid_id,
+        });
+        let transfer_future: Future = test_usad_stablecoin.aleo/transfer_public(self.caller, amount);
+        let out: StakeRefunded = StakeRefunded {
+            owner: self.caller,
+            auction_id: auction_id,
+            bid_id: bid_id,
+            amount: amount,
+        };
+        let f: Future = finalize_refund_stake_usad(auction_id, bid_key_hash, self.caller, amount, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_refund_stake_usad(
+        auction_id: field,
+        bid_key_hash: field,
+        caller: address,
+        amount: u64,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 2u8);
+        let status: u8 = Mapping::get(auction_status, auction_id);
+        let is_cancelled: bool = status == 4u8;
+        let is_finalized: bool = status == 3u8;
+        assert(is_cancelled || is_finalized);
+        assert_eq(Mapping::get(bid_owners, bid_key_hash), caller);
+        let stored_stake: u64 = Mapping::get_or_use(bid_stakes, bid_key_hash, 0u64);
+        assert_eq(amount, stored_stake);
+        assert(amount > 0u64);
+        let revealed_amount: u64 = Mapping::get_or_use(revealed_bids, bid_key_hash, 0u64);
+        let did_reveal: bool = revealed_amount > 0u64;
+        assert(is_cancelled || did_reveal);
+        Mapping::set(bid_stakes, bid_key_hash, 0u64);
+        transfer_future.await();
+    }
+
+    async transition slash_unrevealed_usad(
+        public auction_id: field,
+        public bid_id: field,
+        public amount: u64,
+    ) -> (StakeSlashed, Future) {
+        assert(auction_id != 0field);
+        assert(bid_id != 0field);
+        let bid_key_hash: field = BHP256::hash_to_field(BidKey {
+            auction_id: auction_id,
+            bid_id: bid_id,
+        });
+        let transfer_future: Future = test_usad_stablecoin.aleo/transfer_public(self.caller, amount);
+        let out: StakeSlashed = StakeSlashed {
+            owner: self.caller,
+            auction_id: auction_id,
+            bid_id: bid_id,
+            amount: amount,
+        };
+        let f: Future = finalize_slash_unrevealed_usad(auction_id, bid_key_hash, self.caller, amount, transfer_future);
+        return (out, f);
+    }
+
+    async function finalize_slash_unrevealed_usad(
+        auction_id: field,
+        bid_key_hash: field,
+        caller: address,
+        amount: u64,
+        transfer_future: Future,
+    ) {
+        assert_eq(Mapping::get(auction_token_type, auction_id), 2u8);
         assert_eq(Mapping::get(auction_creators, auction_id), caller);
         let status: u8 = Mapping::get(auction_status, auction_id);
         assert(status == 2u8 || status == 3u8);
