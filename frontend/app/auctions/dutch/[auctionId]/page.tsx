@@ -210,7 +210,7 @@ export default function DutchDetailPage({ params }: { params: { auctionId: strin
                 eyebrow="Dutch Auctions"
                 eyebrowHref="/auctions/dutch"
                 title={`Dutch ${params.auctionId}`}
-                description={`Track the live price, take it in one transaction, then import the result into the linked RFQ. Prices use ${tokenLabel(auctionTokenType)}. Commit stake remains ALEO credits.`}
+                description={`Track the live price, take it in one transaction, then import the result into the linked RFQ. Prices use ${tokenLabel(auctionTokenType)}. Commit stake uses ${tokenLabel(auctionTokenType)}.`}
                 actions={<TokenChip tokenType={auction.tokenType} label={auction.tokenSymbol || undefined} />}
             />
 

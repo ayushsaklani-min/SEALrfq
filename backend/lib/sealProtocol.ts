@@ -20,8 +20,8 @@ export const PROGRAM_IDS = {
     credits: 'credits.aleo',
     usdcx: 'test_usdcx_stablecoin.aleo',
     usad: 'test_usad_stablecoin.aleo',
-    vickrey: process.env.ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v8.aleo',
-    dutch: process.env.ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v8.aleo',
+    vickrey: process.env.ALEO_VICKREY_PROGRAM_ID || 'sealvickrey_v9.aleo',
+    dutch: process.env.ALEO_DUTCH_PROGRAM_ID || 'sealdutch_v9.aleo',
 } as const;
 
 export const TOKEN_TYPE = {

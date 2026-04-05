@@ -219,7 +219,7 @@ export default function DutchAuctionsPage() {
                 eyebrow="Auctions"
                 eyebrowHref="/auctions"
                 title="Dutch Auction"
-                description="Price starts high and drops each block. The current deployed contract supports linked RFQs and ALEO credits only."
+                description="Price starts high and drops each block. Supports linked RFQs with ALEO credits, USDCx, or USAD."
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
