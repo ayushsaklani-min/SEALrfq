@@ -60,7 +60,7 @@ function getRecordPlaintext(record: any): string | null {
 }
 
 function programIdToTokenName(programId: string): string {
-    if (programId.includes('usdcx')) return 'USDCX';
+    if (programId.includes('usdcx')) return 'USDCx';
     if (programId.includes('usad')) return 'USAD';
     if (programId === 'credits.aleo') return 'ALEO credits';
     return programId;

@@ -357,13 +357,13 @@ export function buildVendorOpportunitySnapshot(input: OpportunityInput): VendorO
     const blocksRemaining = input.currentBlock === null ? null : Math.max(0, input.biddingDeadline - input.currentBlock);
     const settlementLabel =
         input.tokenType === TOKEN_TYPE.CREDITS
-            ? 'Aleo credits settlement path'
+            ? 'Aleo credits settlement path with optional private invoice'
             : `${tokenLabel(input.tokenType)} private settlement ready`;
 
     const positives = listTop([
         buyerTrustScore >= 75 ? `${buyerProfile?.summaryLabel || 'Reliable buyer'} with strong indexed history` : '',
         buyerCompletionRate >= 70 ? `Buyer completion rate is ${buyerCompletionRate}%` : '',
-        input.tokenType !== TOKEN_TYPE.CREDITS ? 'Private stablecoin settlement path is available' : 'Settlement stays inside the core credits path',
+        input.tokenType !== TOKEN_TYPE.CREDITS ? 'Private stablecoin settlement path is available' : 'Private settlement with Shield ALEO credit records is available',
         bidCount < minBidCount ? 'Bid floor has not been crowded yet' : '',
     ], 4);
 

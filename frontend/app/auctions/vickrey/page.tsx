@@ -210,7 +210,7 @@ export default function VickreyAuctionsPage() {
                 eyebrow="Auctions"
                 eyebrowHref="/auctions"
                 title="Vickrey Auction"
-                description="Sealed second-price auction. The current deployed contract supports linked RFQs and ALEO credits only."
+                description="Sealed second-price auction for linked RFQs. The deployed flow supports ALEO credits, USDCx, and USAD."
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
@@ -229,7 +229,7 @@ export default function VickreyAuctionsPage() {
                             <TextInput value={rfqId} onChange={(event) => setRfqId(event.target.value)} placeholder="123field" />
                         </Field>
 
-                        <Field label="Settlement token">
+                        <Field label="Settlement token" hint="Bid amounts and required stake use the same token in this auction flow.">
                             <SelectInput value={tokenType} onChange={(event) => setTokenType(event.target.value)}>
                                 <option value={TOKEN_TYPE.CREDITS}>ALEO credits</option>
                                 <option value={TOKEN_TYPE.USDCX}>USDCx</option>

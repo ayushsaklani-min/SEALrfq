@@ -32,6 +32,7 @@ import {
     PRICING_MODE,
     randomField,
     TIMING,
+    tokenLabel,
     TOKEN_TYPE,
 } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
@@ -239,7 +240,7 @@ export default function CreateRfqPage() {
                     <div className="space-y-4">
                         <DataGrid>
                             <DataPoint label="RFQ id" value={<CopyableText value={rfqId} displayValue={truncateMiddle(rfqId, 16, 10)} />} />
-                            <DataPoint label="Settlement token" value={Number(tokenType) === TOKEN_TYPE.USDCX ? 'USDCx' : Number(tokenType) === TOKEN_TYPE.USAD ? 'USAD' : 'ALEO'} />
+                            <DataPoint label="Settlement token" value={Number(tokenType) === TOKEN_TYPE.CREDITS ? 'ALEO credits' : tokenLabel(Number(tokenType))} />
                         </DataGrid>
                         <TxStatusView idempotencyKey={idempotencyKey} showHistory={true} />
                         <ActionBar>
@@ -369,7 +370,7 @@ export default function CreateRfqPage() {
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-2">
-                            <Field label="Settlement token" hint="Bids and escrow settle in this token. Stake is always ALEO credits.">
+                            <Field label="Settlement token" hint="RFQ bids and escrow settle in this token. Standard RFQ commit stake uses ALEO credits, while linked auction modes follow their own token-specific stake rules.">
                                 <SelectInput value={tokenType} onChange={(event) => setTokenType(event.target.value)}>
                                     <option value={TOKEN_TYPE.CREDITS}>ALEO credits</option>
                                     <option value={TOKEN_TYPE.USDCX}>USDCx</option>

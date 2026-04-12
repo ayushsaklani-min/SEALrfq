@@ -529,6 +529,12 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         record.microcredits ?? record.amount ?? null;
     const getRecordText = (record: any): string | null =>
         record.plaintext ?? null;
+    const privateRecordLabel =
+        escrow.tokenType === TOKEN_TYPE.CREDITS
+            ? 'ALEO credits'
+            : escrow.tokenType === TOKEN_TYPE.USDCX
+              ? 'USDCx'
+              : 'USAD';
 
     const unspentWalletRecords = walletRecords
         .filter((record) => !record.spent)
@@ -826,7 +832,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                 <div className="rounded-xl border border-white/12 bg-white/[0.04] p-4">
                                     <div className="flex flex-wrap items-center justify-between gap-3">
                                         <div>
-                                            <div className="text-sm font-semibold text-white">Shield private credits</div>
+                                            <div className="text-sm font-semibold text-white">{`Shield private ${privateRecordLabel} records`}</div>
                                             <div className="text-xs leading-5 text-white/55">Only records that individually cover the invoice are shown.</div>
                                         </div>
                                         <Button variant="secondary" size="sm" isLoading={walletRecordsLoading} onClick={() => void loadWalletRecords()}>
@@ -837,7 +843,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                         <div className="mt-4"><Notice tone="danger">{walletRecordsError}</Notice></div>
                                     ) : null}
                                     {!walletRecordsLoading && walletRecordsLoaded && unspentWalletRecords.length === 0 ? (
-                                        <div className="mt-4 text-sm text-white/60">No unspent private records found in Shield for this wallet.</div>
+                                        <div className="mt-4 text-sm text-white/60">{`No unspent private ${privateRecordLabel} records found in Shield for this wallet.`}</div>
                                     ) : null}
                                     {!walletRecordsLoading && walletRecordsLoaded && eligibleWalletRecords.length === 0 && unspentWalletRecords.length > 0 ? (
                                         <div className="mt-4 space-y-3">

@@ -26,7 +26,7 @@ import {
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
 import { buildVendorOpportunitySnapshot } from '@/lib/procurementIntelligence';
-import { formatAmount, pricingLabel, PRICING_MODE, randomField, TIMING } from '@/lib/sealProtocol';
+import { formatAmount, pricingLabel, PRICING_MODE, randomField, TIMING, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
@@ -289,8 +289,9 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                     <Panel title="RFQ summary">
                         <DataGrid columns={2}>
                             <DataPoint label="RFQ id" value={<CopyableText value={rfq.id} displayValue={truncateMiddle(rfq.id, 16, 10)} />} />
+                            <DataPoint label="Settlement token" value={rfq.tokenType === TOKEN_TYPE.CREDITS ? 'ALEO credits' : tokenLabel(rfq.tokenType)} />
                             <DataPoint label="Minimum bid" value={formatAmount(rfq.minBid, rfq.tokenType)} />
-                            <DataPoint label="Required stake" value={formatAmount(rfq.flatStake || '0', 0)} />
+                            <DataPoint label="Required stake (ALEO credits)" value={formatAmount(rfq.flatStake || '0', 0)} />
                             <DataPoint
                                 label="Buyer"
                                 value={<CopyableText value={rfq.buyer} displayValue={truncateMiddle(rfq.buyer, 14, 10)} />}
@@ -339,7 +340,7 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                         </Panel>
                     ) : null}
 
-                    <Panel title="Commit bid" subtitle="Stake is fixed by the contract and cannot be edited.">
+                    <Panel title="Commit bid" subtitle="For standard RFQs, the bid amount uses the RFQ settlement token and the fixed commit stake is paid in ALEO credits.">
                         {rfq.pricingMode === PRICING_MODE.RFQ ? (
                             <form className="space-y-4" onSubmit={handleCommit}>
                                 <Field label="Your sealed price" hint={`Must be at least ${formatAmount(rfq.minBid, rfq.tokenType)}.`}>
