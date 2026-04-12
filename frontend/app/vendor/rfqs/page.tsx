@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { CounterpartyProfileCard, type BuyerProfileSummary } from '@/components/CounterpartyProfileCard';
 import {
     CopyableText,
     DataGrid,
@@ -40,6 +41,7 @@ type RfqListItem = {
     buyer?: string | null;
     paid?: boolean;
     winnerAccepted?: boolean;
+    buyerProfile?: BuyerProfileSummary | null;
 };
 
 export default function VendorOpenRfqsPage() {
@@ -230,6 +232,9 @@ export default function VendorOpenRfqsPage() {
                                 <DataPoint label="Bids so far" value={`${rfq.bidCount ?? '0'} / ${rfq.minBidCount ?? '1'}`} />
                                 <DataPoint label="Quantity" value={rfq.quantity ? `${rfq.quantity} ${rfq.unit || ''}`.trim() : '--'} />
                                 <DataPoint label="Buyer" value={rfq.buyer ? truncateMiddle(rfq.buyer, 10, 6) : '--'} />
+                            </div>
+                            <div className="mt-4">
+                                <CounterpartyProfileCard title="Buyer scorecard" profile={rfq.buyerProfile} compact />
                             </div>
                         </Link>
                     ))}

@@ -15,6 +15,7 @@ import {
     buildWalletTxRequest,
 } from './common';
 import crypto from 'crypto';
+import { getVendorProfiles } from '../../lib/counterpartyProfile';
 
 export async function handleCreateRFQ(request: NextRequest) {
     const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
@@ -190,12 +191,14 @@ export async function handleGetBids(request: NextRequest, rfqId: string) {
         where: { rfqId },
         orderBy: [{ isWinner: 'desc' }, { revealedAmount: 'asc' }],
     });
+    const vendorProfiles = await getVendorProfiles(prisma, bids.map((bid) => bid.vendor));
 
     return NextResponse.json({
         status: 'success',
         data: bids.map((bid) => ({
             ...serializeBid(bid),
             isWinner: onChainExists ? chain.winner === bid.vendor : bid.isWinner,
+            vendorProfile: vendorProfiles[bid.vendor] ?? null,
         })),
     });
 }

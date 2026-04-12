@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { CounterpartyProfileCard, type BuyerProfileSummary } from '@/components/CounterpartyProfileCard';
 import DeadlineCountdown from '@/components/DeadlineCountdown';
 import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
@@ -24,6 +25,7 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import { buildVendorOpportunitySnapshot } from '@/lib/procurementIntelligence';
 import { formatAmount, pricingLabel, PRICING_MODE, randomField, TIMING } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
@@ -42,6 +44,9 @@ type RfqDetail = {
     biddingDeadline: number;
     revealDeadline: number;
     buyer: string;
+    bidCount?: string | null;
+    minBidCount?: string | null;
+    buyerProfile?: BuyerProfileSummary | null;
 };
 
 type ExistingBid = {
@@ -120,6 +125,22 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
             cancelled = true;
         };
     }, [params.rfqId]);
+
+    const opportunity = useMemo(
+        () =>
+            rfq
+                ? buildVendorOpportunitySnapshot({
+                      biddingDeadline: rfq.biddingDeadline,
+                      currentBlock,
+                      tokenType: rfq.tokenType,
+                      pricingMode: rfq.pricingMode,
+                      bidCount: rfq.bidCount,
+                      minBidCount: rfq.minBidCount,
+                      buyerProfile: rfq.buyerProfile,
+                  })
+                : null,
+        [rfq, currentBlock],
+    );
 
     const handleCommit = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -281,6 +302,43 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                         ) : null}
                     </Panel>
 
+                    {opportunity ? (
+                        <Panel title="Opportunity intelligence" subtitle="Use buyer history and round pressure before you commit a sealed bid.">
+                            <Notice tone={opportunity.tone} title={opportunity.summaryTitle}>
+                                {opportunity.recommendation}
+                            </Notice>
+                            <div className="mt-4">
+                                <DataGrid columns={4}>
+                                    <DataPoint label="Buyer trust" value={`${opportunity.buyerTrustScore}/100`} />
+                                    <DataPoint label="Completion rate" value={`${opportunity.buyerCompletionRate}%`} />
+                                    <DataPoint label="Round pressure" value={opportunity.competitionProgressLabel} />
+                                    <DataPoint
+                                        label="Bid window"
+                                        value={opportunity.blocksRemaining === null ? '--' : `${opportunity.blocksRemaining} blocks left`}
+                                    />
+                                </DataGrid>
+                            </div>
+                            <div className="mt-4">
+                                <CounterpartyProfileCard title="Buyer scorecard" profile={rfq.buyerProfile} compact />
+                            </div>
+                            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                                <div className="rounded-xl border border-emerald-200/20 bg-emerald-400/[0.06] p-4">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200/70">Reasons to participate</div>
+                                    <div className="mt-2 space-y-2 text-sm leading-6 text-emerald-50/90">
+                                        {opportunity.positives.length ? opportunity.positives.map((item) => <div key={item}>• {item}</div>) : <div>• Price discipline matters more than historical buyer data here.</div>}
+                                    </div>
+                                </div>
+                                <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] p-4">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/70">Watchouts</div>
+                                    <div className="mt-2 space-y-2 text-sm leading-6 text-amber-50/90">
+                                        {opportunity.cautions.length ? opportunity.cautions.map((item) => <div key={item}>• {item}</div>) : <div>• No major indexed buyer risk flags.</div>}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="mt-4 text-sm text-white/60">{opportunity.settlementLabel}</div>
+                        </Panel>
+                    ) : null}
+
                     <Panel title="Commit bid" subtitle="Stake is fixed by the contract and cannot be edited.">
                         {rfq.pricingMode === PRICING_MODE.RFQ ? (
                             <form className="space-y-4" onSubmit={handleCommit}>
@@ -308,7 +366,7 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                             <DeadlineCountdown deadlineBlock={rfq.biddingDeadline} label="Bid window" passedLabel="Bidding closed" />
                             <DeadlineCountdown deadlineBlock={rfq.revealDeadline} label="Reveal window" passedLabel="Reveal closed" />
                         </div>
-                            <div className="mt-4 text-sm text-white/55">
+                        <div className="mt-4 text-sm text-white/55">
                             {biddingOpen
                                 ? 'Reveal is not open yet. It starts automatically after bidding closes.'
                                 : revealOpen

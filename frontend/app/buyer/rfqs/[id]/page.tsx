@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { CounterpartyProfileCard, type BuyerProfileSummary, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
 import DeadlineCountdown from '@/components/DeadlineCountdown';
 import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
@@ -58,6 +59,7 @@ type RFQDetail = {
     winningStake?: string | null;
     winnerAccepted?: boolean;
     platformPaused?: boolean;
+    buyerProfile?: BuyerProfileSummary | null;
 };
 
 type Bid = {
@@ -69,6 +71,7 @@ type Bid = {
     stake: string;
     isRefunded?: boolean;
     isSlashed?: boolean;
+    vendorProfile?: VendorProfileSummary | null;
 };
 
 type ImportForm = {
@@ -322,6 +325,7 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
         !rfq.auctionSource &&
         bidCount === 0;
     const canFundEscrow = rfq.status === 'WINNER_SELECTED' && rfq.winnerAccepted && Boolean(rfq.winningBidAmount);
+    const winningBidProfile = bids.find((bid) => bid.isWinner)?.vendorProfile ?? null;
     const auctionLabel = pricingLabel(rfq.pricingMode);
     const auctionWorkspaceHref =
         rfq.pricingMode === PRICING_MODE.VICKREY
@@ -428,6 +432,9 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                             <DataPoint label="Winning amount" value={rfq.winningBidAmount ? formatAmount(rfq.winningBidAmount, rfq.tokenType) : '--'} />
                             <DataPoint label="Winner accepted" value={rfq.winnerAccepted ? 'Yes' : 'No'} />
                         </DataGrid>
+                        <div className="mt-4">
+                            <CounterpartyProfileCard title="Buyer scorecard" profile={rfq.buyerProfile} compact />
+                        </div>
                         <div className="mt-4 grid gap-3">
                             <DeadlineCountdown deadlineBlock={rfq.biddingDeadline} label="Bidding deadline" passedLabel="Bidding closed" />
                             <DeadlineCountdown deadlineBlock={rfq.revealDeadline} label="Reveal deadline" passedLabel="Reveal closed" />
@@ -558,6 +565,9 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                                                 </Button>
                                             ) : null}
                                         </ActionBar>
+                                        <div className="mt-3">
+                                            <CounterpartyProfileCard title="Vendor scorecard" profile={bid.vendorProfile} compact />
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -580,6 +590,9 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                             <InfoRow label="Accepted" value={rfq.winnerAccepted ? 'Yes' : 'No'} />
                             <InfoRow label="Private payment" value={rfq.paid ? 'Yes' : 'No'} />
                         </InfoList>
+                        <div className="mt-4">
+                            <CounterpartyProfileCard title="Winning vendor" profile={winningBidProfile} compact />
+                        </div>
                         {rfq.status === 'ESCROW_FUNDED' ? (
                             <ActionBar className="mt-4">
                                 <Link href={`/escrow/${encodeURIComponent(rfq.id)}`}>
@@ -614,6 +627,17 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                         ) : (
                             <div className="text-sm text-[hsl(var(--muted-foreground))]">No cancel path is available right now.</div>
                         )}
+                    </Panel>
+
+                    <Panel title="Audit evidence">
+                        <div className="text-sm text-white/60">
+                            SEALrfq already indexes the workflow trail for this RFQ. Open it during demos to prove bid, winner, and settlement history.
+                        </div>
+                        <ActionBar className="mt-4">
+                            <Link href={`/audit/${encodeURIComponent(rfq.id)}`}>
+                                <Button variant="secondary">Open audit trail</Button>
+                            </Link>
+                        </ActionBar>
                     </Panel>
 
                     {txKey ? (

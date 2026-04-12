@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { useWallet } from '@/contexts/WalletContext';
 import { Notice, PageHeader, PageShell, Panel, CardSkeleton } from '@/components/protocol/ProtocolPrimitives';
-import { Plus, FileText, Gavel, ShieldCheck, ArrowRight, Activity, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, FileText, Gavel, ShieldCheck, ArrowRight, Activity, CheckCircle2, AlertCircle, LineChart } from 'lucide-react';
 
 type PlatformSummary = {
     feeBps: number;
@@ -18,12 +18,14 @@ const buyerActions = [
     { title: 'Create RFQ', href: '/buyer/create-rfq', description: 'Start a new sealed-bid procurement request.', icon: Plus, accent: 'bg-emerald-400/15 border-emerald-300/25 text-emerald-200' },
     { title: 'My RFQs', href: '/buyer/rfqs', description: 'Manage your active and past requests.', icon: FileText, accent: 'bg-blue-400/15 border-blue-300/25 text-blue-200' },
     { title: 'Auctions', href: '/auctions', description: 'Run Vickrey or Dutch price-discovery auctions.', icon: Gavel, accent: 'bg-amber-400/15 border-amber-300/25 text-amber-200' },
+    { title: 'Insights', href: '/insights', description: 'Watch live trust and settlement metrics for the testnet build.', icon: LineChart, accent: 'bg-purple-400/15 border-purple-300/25 text-purple-200' },
 ];
 
 const vendorActions = [
     { title: 'Open RFQs', href: '/vendor/rfqs', description: 'Find open requests and submit sealed bids.', icon: FileText, accent: 'bg-blue-400/15 border-blue-300/25 text-blue-200' },
     { title: 'My Bids', href: '/vendor/my-bids', description: 'Track your bids, reveals, and awards.', icon: ShieldCheck, accent: 'bg-emerald-400/15 border-emerald-300/25 text-emerald-200' },
     { title: 'Auctions', href: '/auctions', description: 'Participate in live price-discovery auctions.', icon: Gavel, accent: 'bg-amber-400/15 border-amber-300/25 text-amber-200' },
+    { title: 'Insights', href: '/insights', description: 'Watch live trust and settlement metrics for the testnet build.', icon: LineChart, accent: 'bg-purple-400/15 border-purple-300/25 text-purple-200' },
 ];
 
 const buyerCopy = {
@@ -84,11 +86,11 @@ export default function Dashboard() {
             ) : null}
 
             {loading ? (
-                <div className="grid gap-4 md:grid-cols-3"><CardSkeleton /><CardSkeleton /><CardSkeleton /></div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><CardSkeleton /><CardSkeleton /><CardSkeleton /><CardSkeleton /></div>
             ) : (
                 <div className="space-y-2">
                     <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/50 px-1">Quick actions</div>
-                    <div className="grid gap-4 md:grid-cols-3">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         {actions.map((action) => (
                             <Link key={action.title} href={action.href} className="group relative overflow-hidden rounded-2xl border border-white/12 bg-white/[0.04] p-5 transition-all duration-200 hover:-translate-y-1 hover:border-white/22 hover:bg-white/[0.07] hover:shadow-[0_12px_40px_rgba(0,0,0,0.4)]">
                                 <div className="flex items-start justify-between">

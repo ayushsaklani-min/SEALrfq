@@ -59,6 +59,7 @@ export default function Navbar() {
     const navLinks = walletAddress
         ? [
             { name: 'Dashboard', href: '/dashboard' },
+            { name: 'Insights', href: '/insights' },
             ...(role === 'BUYER'
                 ? [
                     { name: 'Create RFQ', href: '/buyer/create-rfq' },

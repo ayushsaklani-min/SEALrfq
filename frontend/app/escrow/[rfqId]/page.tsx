@@ -1,6 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { CounterpartyProfileCard, type BuyerProfileSummary, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
 import { ConfirmModal, type ConfirmDetail } from '@/components/ConfirmModal';
 import { useToast } from '@/components/Toast';
 import { TxStatusView } from '@/components/TxStatus';
@@ -52,6 +54,8 @@ type EscrowView = {
     timeoutBlock: number;
     winner?: string | null;
     creator?: string | null;
+    creatorProfile?: BuyerProfileSummary | null;
+    winnerProfile?: VendorProfileSummary | null;
     paid: boolean;
     receiptHash?: string | null;
     feeBps: number;
@@ -780,6 +784,10 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                             <InfoRow label="Private payment" value={escrow.paid ? 'Complete' : 'Pending'} />
                             <InfoRow label="Settlement mode" value={settlementActionMode} />
                         </InfoList>
+                        <div className="mt-4 space-y-3">
+                            <CounterpartyProfileCard title="Buyer scorecard" profile={escrow.creatorProfile} compact />
+                            <CounterpartyProfileCard title="Winner scorecard" profile={escrow.winnerProfile} compact />
+                        </div>
                         {!isFullySettled ? (
                             <>
                                 <ActionBar className="mt-4">
@@ -818,6 +826,11 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                 All settlement actions are complete. The winner has been paid and the escrow bond has been returned to the creator.
                             </div>
                         )}
+                        <ActionBar className="mt-4">
+                            <Link href={`/audit/${encodeURIComponent(escrow.rfqId)}`}>
+                                <Button variant="secondary">Open audit trail</Button>
+                            </Link>
+                        </ActionBar>
                     </Panel>
 
                     {hasReceiptArtifact ? (

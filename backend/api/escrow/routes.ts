@@ -21,6 +21,7 @@ import {
     getWinningAmountFromChain,
     tokenSymbol,
 } from '../../lib/sealProtocol';
+import { getBuyerProfiles, getVendorProfiles } from '../../lib/counterpartyProfile';
 
 const prisma = new PrismaClient();
 const tracker = new TransactionTracker(prisma);
@@ -159,6 +160,11 @@ export async function handleGetEscrow(request: NextRequest, rfqId: string) {
         return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Escrow not found' } }, { status: 404 });
     }
 
+    const [creatorProfiles, winnerProfiles] = await Promise.all([
+        getBuyerProfiles(prisma, [state.chain.creator ?? state.rfq.buyer]),
+        getVendorProfiles(prisma, [state.chain.winner]),
+    ]);
+
     const remainingAmount = state.escrow.totalAmount - state.releasedAmount;
     const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
     const timeoutBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_TIMEOUT_BLOCKS;
@@ -183,6 +189,8 @@ export async function handleGetEscrow(request: NextRequest, rfqId: string) {
             timeoutBlock,
             winner: state.chain.winner,
             creator: state.chain.creator ?? state.rfq.buyer,
+            creatorProfile: creatorProfiles[state.chain.creator ?? state.rfq.buyer] ?? null,
+            winnerProfile: state.chain.winner ? winnerProfiles[state.chain.winner] ?? null : null,
             paid: state.chain.paid,
             receiptHash: state.chain.receiptHash,
             feeBps: feeBpsForToken(state.chain.escrowToken, state.platform.feeBps),

@@ -12,7 +12,8 @@ export default function AppRouteGuard({ children }: { children: React.ReactNode 
     const router = useRouter();
     const { ready, walletAddress, role } = useWallet();
 
-    const isPublicPath = PUBLIC_PATHS.has(pathname);
+    const isInsightsPath = pathname.startsWith('/insights');
+    const isPublicPath = PUBLIC_PATHS.has(pathname) || isInsightsPath;
     const isRoleSelectionPath = pathname === ROLE_SELECTION_PATH;
 
     useEffect(() => {

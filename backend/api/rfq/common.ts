@@ -24,6 +24,7 @@ import {
     randomField,
     tokenSymbol,
 } from '../../lib/sealProtocol';
+import { getBuyerProfiles } from '../../lib/counterpartyProfile';
 
 export const prisma = new PrismaClient();
 export const tracker = new TransactionTracker(prisma);
@@ -102,7 +103,7 @@ export async function getWinningAmountFromChain(rfqId: string): Promise<string |
 }
 
 export async function augmentRFQ(rfq: any) {
-    const [chain, platform, winningBid, onChainWinningAmount] = await Promise.all([
+    const [chain, platform, winningBid, onChainWinningAmount, buyerProfiles] = await Promise.all([
         getRfqChainState(rfq.id),
         getPlatformConfig(),
         prisma.bid.findFirst({
@@ -110,6 +111,7 @@ export async function augmentRFQ(rfq: any) {
             select: { id: true, vendor: true, revealedAmount: true, stake: true },
         }),
         getWinningAmountFromChain(rfq.id),
+        getBuyerProfiles(prisma, [rfq.buyer]),
     ]);
 
     // statusCode 0 means the RFQ does not exist on-chain yet (the on-chain
@@ -137,6 +139,7 @@ export async function augmentRFQ(rfq: any) {
         tokenSymbol: tokenSymbol(tokenType),
         pricingMode,
         creator: chain.creator ?? rfq.buyer,
+        buyerProfile: buyerProfiles[rfq.buyer] ?? null,
         lifecycleBlock: chain.lifecycleBlock,
         paid,
         platformPaused: platform.paused,

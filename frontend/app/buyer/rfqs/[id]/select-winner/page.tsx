@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { CounterpartyProfileCard, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
 import { TxStatusView } from '@/components/TxStatus';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
@@ -18,6 +20,7 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import { analyzeWinnerSelection } from '@/lib/procurementIntelligence';
 import { formatAmount, PRICING_MODE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
@@ -38,7 +41,14 @@ type Bid = {
     isRevealed: boolean;
     revealedAmount?: string | null;
     isWinner?: boolean;
+    vendorProfile?: VendorProfileSummary | null;
 };
+
+function riskVariant(risk: 'low' | 'medium' | 'high'): 'success' | 'warning' | 'destructive' {
+    if (risk === 'low') return 'success';
+    if (risk === 'medium') return 'warning';
+    return 'destructive';
+}
 
 export default function SelectWinnerPage({ params }: { params: { id: string } }) {
     const addRecord = useProtocolStore((state) => state.addRecord);
@@ -89,6 +99,8 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
             cancelled = true;
         };
     }, [params.id]);
+
+    const decision = useMemo(() => analyzeWinnerSelection(bids), [bids]);
 
     const selectWinner = async (winningBidId: string) => {
         if (!rfq || acting) return;
@@ -180,14 +192,62 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
                 </Notice>
             ) : null}
 
-            <Panel title="Revealed bids">
-                {bids.length === 0 ? (
+            {decision.recommendedBid ? (
+                <Panel title="Decision console" subtitle="Ranks suppliers on procurement value, not just the lowest revealed price.">
+                    <Notice tone={decision.recommendedBid.riskLevel === 'low' ? 'success' : 'warning'} title="Recommended supplier">
+                        {decision.recommendedSummary}
+                    </Notice>
+                    <div className="mt-4">
+                        <DataGrid columns={4}>
+                            <DataPoint label="Recommended score" value={`${decision.recommendedBid.recommendationScore}/100`} />
+                            <DataPoint
+                                label="Lowest bid"
+                                value={decision.lowestBid ? formatAmount(decision.lowestBid.revealedAmount, rfq.tokenType) : '--'}
+                            />
+                            <DataPoint label="Price spread" value={`${decision.priceSpreadPercent.toFixed(2)}%`} />
+                            <DataPoint label="Profile coverage" value={`${decision.profileCoverageRate}%`} />
+                        </DataGrid>
+                    </div>
+                    {decision.decisionReasons.length ? (
+                        <div className="mt-4 space-y-2">
+                            {decision.decisionReasons.map((reason) => (
+                                <div key={reason} className="text-sm leading-6 text-white/70">
+                                    • {reason}
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+                    {decision.procurementWarnings.length ? (
+                        <div className="mt-4 space-y-2 rounded-xl border border-amber-200/20 bg-amber-400/[0.06] p-4">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/70">Watchouts</div>
+                            {decision.procurementWarnings.map((warning) => (
+                                <div key={warning} className="text-sm leading-6 text-amber-50/90">
+                                    • {warning}
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+                </Panel>
+            ) : null}
+
+            <Panel title="Ranked supplier options">
+                {decision.rankedBids.length === 0 ? (
                     <div className="text-sm text-[hsl(var(--muted-foreground))]">No revealed bids are available yet.</div>
                 ) : (
                     <div className="space-y-3">
-                        {bids.map((bid) => (
-                            <div key={bid.id} className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                                <DataGrid columns={3}>
+                        {decision.rankedBids.map((bid) => (
+                            <div key={bid.id} className="rounded-xl border border-white/12 bg-white/[0.05] p-4 transition hover:border-white/20">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant={bid.isRecommended ? 'success' : 'outline'}>
+                                            {bid.isRecommended ? 'Recommended' : `Price rank ${bid.amountRank}`}
+                                        </Badge>
+                                        <Badge variant={riskVariant(bid.riskLevel)}>{bid.riskLevel} risk</Badge>
+                                        <Badge variant="secondary">{bid.recommendationLabel}</Badge>
+                                    </div>
+                                    <div className="text-sm font-semibold text-white">{bid.recommendationScore}/100 decision score</div>
+                                </div>
+                                <DataGrid columns={4}>
                                     <DataPoint
                                         label="Vendor"
                                         value={<CopyableText value={bid.vendor} displayValue={truncateMiddle(bid.vendor, 14, 10)} />}
@@ -196,8 +256,26 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
                                         label="Bid id"
                                         value={<CopyableText value={bid.id} displayValue={truncateMiddle(bid.id, 14, 8)} />}
                                     />
-                                    <DataPoint label="Amount" value={bid.revealedAmount ? formatAmount(bid.revealedAmount, rfq.tokenType) : '--'} />
+                                    <DataPoint label="Amount" value={formatAmount(bid.revealedAmount, rfq.tokenType)} />
+                                    <DataPoint label="Price position" value={bid.deltaFromLowestLabel} />
                                 </DataGrid>
+                                <div className="mt-3">
+                                    <CounterpartyProfileCard title="Vendor scorecard" profile={bid.vendorProfile} compact />
+                                </div>
+                                <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                                    <div className="rounded-xl border border-emerald-200/20 bg-emerald-400/[0.06] p-4">
+                                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200/70">Why this bid works</div>
+                                        <div className="mt-2 space-y-2 text-sm leading-6 text-emerald-50/90">
+                                            {bid.strengths.length ? bid.strengths.map((item) => <div key={item}>• {item}</div>) : <div>• Competes mainly on price.</div>}
+                                        </div>
+                                    </div>
+                                    <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] p-4">
+                                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/70">What to check</div>
+                                        <div className="mt-2 space-y-2 text-sm leading-6 text-amber-50/90">
+                                            {bid.cautions.length ? bid.cautions.map((item) => <div key={item}>• {item}</div>) : <div>• No major indexed execution concerns.</div>}
+                                        </div>
+                                    </div>
+                                </div>
                                 <ActionBar className="mt-4">
                                     <Button disabled={!canSelectWinner || acting} isLoading={acting} onClick={() => selectWinner(bid.id)}>
                                         Select winner

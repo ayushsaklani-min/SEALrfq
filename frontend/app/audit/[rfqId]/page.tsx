@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { CounterpartyProfileCard, type BuyerProfileSummary, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
@@ -16,6 +17,8 @@ import {
     SelectInput,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
+import { analyzeWinnerSelection, buildProcurementPacketMarkdown } from '@/lib/procurementIntelligence';
+import { formatAmount, pricingLabel, STATUS_LABELS, tokenLabel } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 
 type AuditEvent = {
@@ -28,6 +31,33 @@ type AuditEvent = {
     rfqId?: string;
     transition?: string;
     eventData?: any;
+};
+
+type AuditRfqDetail = {
+    id: string;
+    buyer: string;
+    itemName?: string | null;
+    description?: string | null;
+    status: string;
+    tokenType: number;
+    pricingMode: number;
+    biddingDeadline: number;
+    revealDeadline: number;
+    winningVendor?: string | null;
+    winningBidId?: string | null;
+    winningBidAmount?: string | null;
+    winnerAccepted?: boolean;
+    paid?: boolean;
+    buyerProfile?: BuyerProfileSummary | null;
+};
+
+type AuditBid = {
+    id: string;
+    vendor: string;
+    isRevealed: boolean;
+    isWinner?: boolean;
+    revealedAmount?: string | null;
+    vendorProfile?: VendorProfileSummary | null;
 };
 
 function short(value?: string, n = 12): string {
@@ -58,6 +88,8 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
     const rfqId = params.rfqId;
 
     const [events, setEvents] = useState<AuditEvent[]>([]);
+    const [rfq, setRfq] = useState<AuditRfqDetail | null>(null);
+    const [bids, setBids] = useState<AuditBid[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [filterEventType, setFilterEventType] = useState<string>('ALL');
@@ -87,11 +119,49 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
         fetchAuditTrail();
     }, [rfqId, filterEventType]);
 
+    useEffect(() => {
+        if (!rfqId) return;
+
+        let cancelled = false;
+
+        const fetchPacketData = async () => {
+            try {
+                const [rfqResponse, bidsResponse] = await Promise.all([
+                    authenticatedFetch(`/api/rfq/${rfqId}`),
+                    authenticatedFetch(`/api/rfq/${rfqId}/bids`),
+                ]);
+                const rfqJson = await rfqResponse.json();
+                const bidsJson = await bidsResponse.json().catch(() => ({ data: [] }));
+
+                if (!rfqResponse.ok) {
+                    throw new Error(rfqJson?.error?.message || 'Failed to fetch RFQ packet context');
+                }
+
+                if (!cancelled) {
+                    setRfq(rfqJson.data || null);
+                    setBids(bidsJson.data || []);
+                }
+            } catch (err: any) {
+                if (!cancelled) {
+                    setError(err?.message || 'Failed to fetch procurement packet context');
+                }
+            }
+        };
+
+        fetchPacketData();
+        return () => {
+            cancelled = true;
+        };
+    }, [rfqId]);
+
     const eventTypes = useMemo(() => {
         const base = ['ALL'];
         const dynamic = Array.from(new Set(events.map((e) => e.eventType).filter(Boolean))).sort();
         return [...base, ...dynamic];
     }, [events]);
+
+    const decision = useMemo(() => analyzeWinnerSelection(bids), [bids]);
+    const winningBidProfile = useMemo(() => bids.find((bid) => bid.isWinner)?.vendorProfile ?? null, [bids]);
 
     const exportCsv = () => {
         const csv = toCsv(events);
@@ -100,6 +170,18 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
         const a = document.createElement('a');
         a.href = url;
         a.download = `audit_trail_${Date.now()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const exportPacket = () => {
+        if (!rfq) return;
+        const markdown = buildProcurementPacketMarkdown({ rfq, events, decision });
+        const blob = new Blob([markdown], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `sealrfq_procurement_packet_${rfq.id}.md`;
         a.click();
         URL.revokeObjectURL(url);
     };
@@ -133,6 +215,11 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                 actions={
                     <ActionBar>
                         {rfqId ? <CopyableText value={rfqId} displayValue={truncateMiddle(rfqId, 16, 10)} /> : null}
+                        {rfq ? (
+                            <Button onClick={exportPacket} disabled={events.length === 0}>
+                                Export packet
+                            </Button>
+                        ) : null}
                         <Button variant="secondary" onClick={exportCsv} disabled={events.length === 0}>
                             Export CSV
                         </Button>
@@ -145,6 +232,40 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                 <DataPoint label="Event types" value={eventTypes.length - 1} />
                 <DataPoint label="Latest block" value={latestBlock || '--'} />
             </DataGrid>
+
+            {rfq ? (
+                <Panel title="Procurement packet" subtitle="A judge-facing summary of counterparties, decision quality, and settlement evidence.">
+                    <Notice tone={decision.recommendedBid?.riskLevel === 'low' ? 'success' : 'warning'} title="Packet summary">
+                        {decision.recommendedSummary}
+                    </Notice>
+                    <div className="mt-4">
+                        <DataGrid columns={4}>
+                            <DataPoint label="Status" value={STATUS_LABELS[rfq.status] || rfq.status} />
+                            <DataPoint label="Pricing" value={pricingLabel(rfq.pricingMode)} />
+                            <DataPoint label="Token" value={tokenLabel(rfq.tokenType)} />
+                            <DataPoint label="Winning bid" value={rfq.winningBidAmount ? formatAmount(rfq.winningBidAmount, rfq.tokenType) : '--'} />
+                        </DataGrid>
+                    </div>
+                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                        <CounterpartyProfileCard title="Buyer scorecard" profile={rfq.buyerProfile} compact />
+                        <CounterpartyProfileCard title="Winning supplier" profile={winningBidProfile} compact />
+                    </div>
+                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                        <div className="rounded-xl border border-emerald-200/20 bg-emerald-400/[0.06] p-4">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200/70">Decision basis</div>
+                            <div className="mt-2 space-y-2 text-sm leading-6 text-emerald-50/90">
+                                {decision.decisionReasons.length ? decision.decisionReasons.map((reason) => <div key={reason}>• {reason}</div>) : <div>• No ranked supplier recommendation yet.</div>}
+                            </div>
+                        </div>
+                        <div className="rounded-xl border border-amber-200/20 bg-amber-400/[0.06] p-4">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/70">Packet watchouts</div>
+                            <div className="mt-2 space-y-2 text-sm leading-6 text-amber-50/90">
+                                {decision.procurementWarnings.length ? decision.procurementWarnings.map((warning) => <div key={warning}>• {warning}</div>) : <div>• No major indexed procurement warnings.</div>}
+                            </div>
+                        </div>
+                    </div>
+                </Panel>
+            ) : null}
 
             <Panel title="Filters" subtitle="Narrow the event table before exporting.">
                 <div className="grid gap-4 md:grid-cols-[minmax(0,240px)_1fr]">
