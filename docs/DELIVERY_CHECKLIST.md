@@ -7,6 +7,7 @@
 - [x] Add a buyer-side decision console for winner selection
 - [x] Add vendor-side opportunity intelligence before bid commit
 - [x] Add a procurement packet export path on RFQ audit pages
+- [x] Add milestone-based delivery assurance with evidence submission and buyer review
 
 ## Documentation
 

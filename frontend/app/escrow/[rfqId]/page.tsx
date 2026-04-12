@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CounterpartyProfileCard, type BuyerProfileSummary, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
+import { DeliveryMilestoneCard } from '@/components/DeliveryMilestoneCard';
 import { ConfirmModal, type ConfirmDetail } from '@/components/ConfirmModal';
 import { useToast } from '@/components/Toast';
 import { TxStatusView } from '@/components/TxStatus';
@@ -20,12 +21,14 @@ import {
     PageShell,
     Panel,
     PricingChip,
+    SelectInput,
     StatusChip,
     TextInput,
     TokenChip,
 } from '@/components/protocol/ProtocolPrimitives';
 import { useWallet } from '@/contexts/WalletContext';
 import { authenticatedFetch } from '@/lib/authFetch';
+import { type DeliveryMilestone, type DeliverySummary } from '@/lib/deliveryAssurance';
 import { blockEta, calculateFee, formatAmount, netAfterFee, randomField, TOKEN_TYPE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { executeWithAdapter, listShieldCreditsRecords, listShieldStablecoinRecords, requestCreditsRecord, requestStablecoinRecord, requestStablecoinRecordWithProofs, submitTrackedResult, type ShieldCreditsRecordSummary, type ShieldStablecoinRecordSummary, walletFirstTx } from '@/lib/walletTx';
@@ -48,6 +51,8 @@ type EscrowView = {
         releasedAt: string;
         recipient: string;
     }>;
+    milestones: DeliveryMilestone[];
+    deliverySummary: DeliverySummary;
     lifecycleBlock?: number | null;
     currentBlock: number;
     recoveryBlock: number;
@@ -92,6 +97,9 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     const [walletRecordsLoaded, setWalletRecordsLoaded] = useState(false);
     const [walletRecordsError, setWalletRecordsError] = useState<string | null>(null);
     const [settlementTab, setSettlementTab] = useState<'pathA' | 'pathB'>('pathA');
+    const [selectedMilestoneId, setSelectedMilestoneId] = useState('');
+    const [milestoneForms, setMilestoneForms] = useState<Record<string, { evidenceHash: string; evidenceUrl: string; note: string; reviewNote: string; rejectionReason: string }>>({});
+    const [milestoneBusyId, setMilestoneBusyId] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -153,6 +161,28 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         void loadWalletRecords();
     }, [walletAddress, escrow?.tokenType]);
 
+    useEffect(() => {
+        if (!escrow) return;
+        const approvedMilestone = escrow.milestones.find((milestone) => milestone.status === 'APPROVED' && !milestone.releaseTxId);
+        if (approvedMilestone && !selectedMilestoneId) {
+            setSelectedMilestoneId(approvedMilestone.id);
+            setPartialAmount(approvedMilestone.targetAmount);
+        }
+        setMilestoneForms((current) => {
+            const next = { ...current };
+            for (const milestone of escrow.milestones) {
+                next[milestone.id] = next[milestone.id] || {
+                    evidenceHash: milestone.evidenceHash || '',
+                    evidenceUrl: milestone.evidenceUrl || '',
+                    note: milestone.evidenceNote || '',
+                    reviewNote: milestone.reviewNote || '',
+                    rejectionReason: milestone.rejectionReason || '',
+                };
+            }
+            return next;
+        });
+    }, [escrow, selectedMilestoneId]);
+
     const releasePartial = async () => {
         if (!escrow || acting) return;
         setActing(true);
@@ -160,8 +190,8 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         try {
             const result = await walletFirstTx(
                 `/api/escrow/${encodeURIComponent(escrow.rfqId)}/release`,
-                { amount: partialAmount },
-                (_prepareData, txHash) => ({ amount: partialAmount, txHash }),
+                { amount: partialAmount, milestoneId: selectedMilestoneId || undefined },
+                (_prepareData, txHash) => ({ amount: partialAmount, milestoneId: selectedMilestoneId || undefined, txHash }),
             );
             setTxKey(result.idempotencyKey);
         } catch (caught: any) {
@@ -236,6 +266,87 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
             toast.error(caught?.message || 'Failed to recover escrow bond.');
         } finally {
             setActing(false);
+        }
+    };
+
+    const updateMilestoneForm = (
+        milestoneId: string,
+        key: 'evidenceHash' | 'evidenceUrl' | 'note' | 'reviewNote' | 'rejectionReason',
+        value: string,
+    ) => {
+        setMilestoneForms((current) => ({
+            ...current,
+            [milestoneId]: {
+                evidenceHash: '',
+                evidenceUrl: '',
+                note: '',
+                reviewNote: '',
+                rejectionReason: '',
+                ...(current[milestoneId] || {}),
+                [key]: value,
+            },
+        }));
+    };
+
+    const submitMilestoneEvidence = async (milestoneId: string) => {
+        if (!escrow || milestoneBusyId) return;
+        const form = milestoneForms[milestoneId];
+        setMilestoneBusyId(milestoneId);
+        setError(null);
+        try {
+            const response = await authenticatedFetch(`/api/escrow/${encodeURIComponent(escrow.rfqId)}/milestones/${encodeURIComponent(milestoneId)}/submit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    evidenceHash: form?.evidenceHash || '',
+                    evidenceUrl: form?.evidenceUrl || '',
+                    note: form?.note || '',
+                }),
+            });
+            const json = await response.json();
+            if (!response.ok) throw new Error(json?.error?.message || 'Failed to submit evidence.');
+            const refreshed = await authenticatedFetch(`/api/escrow/${encodeURIComponent(escrow.rfqId)}`);
+            const refreshedJson = await refreshed.json().catch(() => null);
+            if (refreshed.ok && refreshedJson?.data) {
+                setEscrow(refreshedJson.data);
+            }
+            toast.success('Milestone evidence submitted.');
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to submit evidence.');
+            toast.error(caught?.message || 'Failed to submit evidence.');
+        } finally {
+            setMilestoneBusyId(null);
+        }
+    };
+
+    const reviewMilestoneEvidence = async (milestoneId: string, approve: boolean) => {
+        if (!escrow || milestoneBusyId) return;
+        const form = milestoneForms[milestoneId];
+        setMilestoneBusyId(milestoneId);
+        setError(null);
+        try {
+            const response = await authenticatedFetch(`/api/escrow/${encodeURIComponent(escrow.rfqId)}/milestones/${encodeURIComponent(milestoneId)}/review`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    approve,
+                    note: form?.reviewNote || '',
+                    rejectionReason: form?.rejectionReason || '',
+                }),
+            });
+            const json = await response.json();
+            if (!response.ok) throw new Error(json?.error?.message || 'Failed to review milestone.');
+            const refreshed = await authenticatedFetch(`/api/escrow/${encodeURIComponent(escrow.rfqId)}`);
+            const refreshedJson = await refreshed.json().catch(() => null);
+            if (refreshed.ok && refreshedJson?.data) {
+                setEscrow(refreshedJson.data);
+            }
+            toast.success(approve ? 'Milestone approved.' : 'Milestone rejected.');
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to review milestone.');
+            toast.error(caught?.message || 'Failed to review milestone.');
+        } finally {
+            setMilestoneBusyId(null);
         }
     };
 
@@ -357,6 +468,7 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
         if (!escrow || !confirm) return [];
         if (confirm.kind === 'releasePartial') return [
             { label: 'Action', value: 'Release partial payment (public)' },
+            { label: 'Milestone', value: selectedMilestoneId ? escrow.milestones.find((milestone) => milestone.id === selectedMilestoneId)?.title || 'Custom amount' : 'Custom amount' },
             { label: 'Gross amount', value: formatAmount(partialAmount, escrow.tokenType) },
             { label: 'Fee', value: formatAmount(feeAmount.toString(), escrow.tokenType) },
             { label: 'Winner receives', value: formatAmount(netAmount.toString(), escrow.tokenType) },
@@ -407,6 +519,8 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
     const netAmount = partialAmountIsValid ? netAfterFee(partialAmount, effectiveFeeBps) : 0n;
     const isCreator = walletAddress && escrow.creator && walletAddress === escrow.creator;
     const isWinner = walletAddress && escrow.winner && walletAddress === escrow.winner;
+    const approvedMilestones = escrow.milestones.filter((milestone) => milestone.status === 'APPROVED' && !milestone.releaseTxId);
+    const selectedMilestone = approvedMilestones.find((milestone) => milestone.id === selectedMilestoneId) ?? null;
     const releasedSoFar = BigInt(escrow.releasedAmount);
     const isFullySettled = escrow.status === 'COMPLETED' || BigInt(escrow.remainingAmount) === 0n;
     const requiredPrivateAmount = BigInt(escrow.winningAmount);
@@ -609,10 +723,39 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         {settlementTab === 'pathA' && (
                             <div className="space-y-4">
                                 <div className="text-sm text-white/55">Pay openly from escrow. The release amount is deducted from the escrow balance on-chain.</div>
+                                <Field
+                                    label="Approved milestone"
+                                    hint="Choose an approved milestone to lock the release amount to a reviewed delivery checkpoint."
+                                >
+                                    <SelectInput
+                                        value={selectedMilestoneId}
+                                        onChange={(event) => {
+                                            const milestoneId = event.target.value;
+                                            setSelectedMilestoneId(milestoneId);
+                                            const milestone = approvedMilestones.find((item) => item.id === milestoneId);
+                                            if (milestone) {
+                                                setPartialAmount(milestone.targetAmount);
+                                            }
+                                        }}
+                                    >
+                                        <option value="">Custom amount</option>
+                                        {approvedMilestones.map((milestone) => (
+                                            <option key={milestone.id} value={milestone.id}>
+                                                {`${milestone.sequence}. ${milestone.title}`}
+                                            </option>
+                                        ))}
+                                    </SelectInput>
+                                </Field>
+                                {selectedMilestone ? (
+                                    <DeliveryMilestoneCard milestone={selectedMilestone} tokenType={escrow.tokenType} />
+                                ) : null}
                                 <Field label="Release amount" hint="Enter the gross amount in raw micro-units.">
                                     <TextInput
                                         value={partialAmount}
-                                        onChange={(event) => setPartialAmount(event.target.value)}
+                                        onChange={(event) => {
+                                            setSelectedMilestoneId('');
+                                            setPartialAmount(event.target.value);
+                                        }}
                                         placeholder="25000000"
                                     />
                                 </Field>
@@ -636,7 +779,11 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                                         Release payment
                                     </Button>
                                     <div className="text-sm text-[hsl(var(--muted-foreground))]">
-                                        {escrow.paid ? 'Private payment is already recorded.' : 'Use this only if you are staying on the public release path.'}
+                                        {escrow.paid
+                                            ? 'Private payment is already recorded.'
+                                            : selectedMilestone
+                                              ? 'This release will be linked to the approved milestone above.'
+                                              : 'Use this only if you are staying on the public release path.'}
                                     </div>
                                 </ActionBar>
                             </div>
@@ -867,9 +1014,90 @@ export default function EscrowDetailPage({ params }: { params: { rfqId: string }
                         </Panel>
                     ) : null}
 
-                    <Panel title="Milestones">
+                    <Panel title="Delivery assurance">
+                        <DataGrid columns={4}>
+                            <DataPoint label="Milestones" value={escrow.deliverySummary?.milestoneCount ?? 0} />
+                            <DataPoint label="Submitted" value={escrow.deliverySummary?.submittedCount ?? 0} />
+                            <DataPoint label="Approved" value={escrow.deliverySummary?.approvedCount ?? 0} />
+                            <DataPoint label="Released" value={escrow.deliverySummary?.releasedCount ?? 0} />
+                        </DataGrid>
+                        {escrow.milestones.length === 0 ? (
+                            <div className="mt-4 text-sm text-[hsl(var(--muted-foreground))]">
+                                No delivery milestones have been planned yet. Return to the buyer RFQ page to define the release checkpoints.
+                            </div>
+                        ) : (
+                            <div className="mt-4 space-y-3">
+                                {escrow.milestones.map((milestone) => {
+                                    const form = milestoneForms[milestone.id] || {
+                                        evidenceHash: '',
+                                        evidenceUrl: '',
+                                        note: '',
+                                        reviewNote: '',
+                                        rejectionReason: '',
+                                    };
+
+                                    return (
+                                        <DeliveryMilestoneCard
+                                            key={milestone.id}
+                                            milestone={milestone}
+                                            tokenType={escrow.tokenType}
+                                            actions={
+                                                <div className="space-y-4">
+                                                    {isWinner && ['PLANNED', 'REJECTED', 'SUBMITTED'].includes(milestone.status) ? (
+                                                        <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                                                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Vendor evidence</div>
+                                                            <div className="grid gap-3 lg:grid-cols-3">
+                                                                <Field label="Evidence hash">
+                                                                    <TextInput value={form.evidenceHash} onChange={(event) => updateMilestoneForm(milestone.id, 'evidenceHash', event.target.value)} placeholder="ipfs/sha256 hash" />
+                                                                </Field>
+                                                                <Field label="Evidence link">
+                                                                    <TextInput value={form.evidenceUrl} onChange={(event) => updateMilestoneForm(milestone.id, 'evidenceUrl', event.target.value)} placeholder="https://..." />
+                                                                </Field>
+                                                                <Field label="Delivery note">
+                                                                    <TextInput value={form.note} onChange={(event) => updateMilestoneForm(milestone.id, 'note', event.target.value)} placeholder="What was delivered" />
+                                                                </Field>
+                                                            </div>
+                                                            <ActionBar>
+                                                                <Button size="sm" isLoading={milestoneBusyId === milestone.id} onClick={() => submitMilestoneEvidence(milestone.id)}>
+                                                                    {milestone.status === 'SUBMITTED' ? 'Resubmit evidence' : 'Submit evidence'}
+                                                                </Button>
+                                                            </ActionBar>
+                                                        </div>
+                                                    ) : null}
+
+                                                    {isCreator && milestone.status === 'SUBMITTED' ? (
+                                                        <div className="space-y-3 rounded-xl border border-blue-300/20 bg-blue-400/[0.06] p-4">
+                                                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-200/70">Buyer review</div>
+                                                            <div className="grid gap-3 lg:grid-cols-2">
+                                                                <Field label="Review note">
+                                                                    <TextInput value={form.reviewNote} onChange={(event) => updateMilestoneForm(milestone.id, 'reviewNote', event.target.value)} placeholder="Acceptance note" />
+                                                                </Field>
+                                                                <Field label="Rejection reason">
+                                                                    <TextInput value={form.rejectionReason} onChange={(event) => updateMilestoneForm(milestone.id, 'rejectionReason', event.target.value)} placeholder="Only required when rejecting" />
+                                                                </Field>
+                                                            </div>
+                                                            <ActionBar>
+                                                                <Button size="sm" isLoading={milestoneBusyId === milestone.id} onClick={() => reviewMilestoneEvidence(milestone.id, true)}>
+                                                                    Approve milestone
+                                                                </Button>
+                                                                <Button size="sm" variant="danger" isLoading={milestoneBusyId === milestone.id} onClick={() => reviewMilestoneEvidence(milestone.id, false)}>
+                                                                    Reject milestone
+                                                                </Button>
+                                                            </ActionBar>
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            }
+                                        />
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </Panel>
+
+                    <Panel title="Settlement history">
                         {escrow.payments.length === 0 ? (
-                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No settlement milestones recorded yet.</div>
+                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No public settlement releases recorded yet.</div>
                         ) : (
                             <div className="space-y-3">
                                 {escrow.payments.map((payment) => (

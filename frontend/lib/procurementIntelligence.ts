@@ -1,4 +1,5 @@
 import { formatAmount, pricingLabel, STATUS_LABELS, tokenLabel, TOKEN_TYPE } from '@/lib/sealProtocol';
+import type { DeliveryMilestone } from '@/lib/deliveryAssurance';
 
 type BuyerProfileLike = {
     kind: 'buyer';
@@ -71,6 +72,7 @@ type PacketInput = {
         processedAt: string;
         transition?: string;
     }>;
+    milestones?: DeliveryMilestone[];
     decision: WinnerSelectionDecision;
 };
 
@@ -406,7 +408,7 @@ export function buildVendorOpportunitySnapshot(input: OpportunityInput): VendorO
     };
 }
 
-export function buildProcurementPacketMarkdown({ rfq, events, decision }: PacketInput) {
+export function buildProcurementPacketMarkdown({ rfq, events, milestones = [], decision }: PacketInput) {
     const lines: string[] = [
         '# SEALrfq Procurement Packet',
         '',
@@ -469,6 +471,15 @@ export function buildProcurementPacketMarkdown({ rfq, events, decision }: Packet
         for (const bid of decision.rankedBids) {
             lines.push(
                 `- ${bid.vendor}: ${formatAmount(bid.revealedAmount, rfq.tokenType)} | score ${bid.recommendationScore}/100 | ${bid.deltaFromLowestLabel} | risk ${bid.riskLevel}`,
+            );
+        }
+    }
+
+    if (milestones.length) {
+        lines.push('', '## Delivery Assurance');
+        for (const milestone of milestones) {
+            lines.push(
+                `- ${milestone.sequence}. ${milestone.title}: ${formatAmount(milestone.targetAmount, rfq.tokenType)} | ${milestone.status}${milestone.evidenceHash ? ` | evidence ${milestone.evidenceHash}` : ''}`,
             );
         }
     }

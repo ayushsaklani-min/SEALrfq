@@ -139,6 +139,7 @@ model RFQ {
   bids              Bid[]
   escrow            Escrow?
   payments          Payment[]
+  deliveryMilestones DeliveryMilestone[]
   events            RFQEvent[]
   
   @@unique([createdTxId, createdEventIdx])
@@ -230,6 +231,33 @@ model Payment {
   @@index([rfqId])
   @@index([recipient])
   @@index([isFinal])
+}
+
+model DeliveryMilestone {
+  id                  String    @id @default(uuid())
+  rfqId               String
+  rfq                 RFQ       @relation(fields: [rfqId], references: [id])
+  sequence            Int
+  title               String
+  description         String?
+  targetAmount        BigInt
+  status              String    @default("PLANNED")
+  evidenceHash        String?
+  evidenceUrl         String?
+  evidenceNote        String?
+  evidenceSubmittedBy String?
+  evidenceSubmittedAt DateTime?
+  reviewedBy          String?
+  reviewedAt          DateTime?
+  reviewNote          String?
+  rejectionReason     String?
+  releaseTxId         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([rfqId, sequence])
+  @@index([rfqId])
+  @@index([status])
 }
 
 // ============================================================================

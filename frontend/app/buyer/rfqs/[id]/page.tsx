@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CounterpartyProfileCard, type BuyerProfileSummary, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
+import { DeliveryMilestoneCard } from '@/components/DeliveryMilestoneCard';
 import DeadlineCountdown from '@/components/DeadlineCountdown';
 import { TxStatusView } from '@/components/TxStatus';
 import { Button } from '@/components/ui/Button';
@@ -27,6 +28,7 @@ import {
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/aleoClient';
+import { type DeliveryMilestone, type DeliverySummary } from '@/lib/deliveryAssurance';
 import { formatAmount, PRICING_MODE, pricingLabel, TIMING } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
@@ -80,8 +82,18 @@ type ImportForm = {
     price: string;
 };
 
+type DeliveryDraft = {
+    title: string;
+    description: string;
+    amount: string;
+};
+
 function parseCount(value?: string | null) {
     return Number(value || '0');
+}
+
+function emptyMilestoneDraft(): DeliveryDraft {
+    return { title: '', description: '', amount: '' };
 }
 
 function hasReached(block: number | null, deadline: number) {
@@ -117,18 +129,28 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState(false);
+    const [milestones, setMilestones] = useState<DeliveryMilestone[]>([]);
+    const [deliverySummary, setDeliverySummary] = useState<DeliverySummary | null>(null);
+    const [milestoneDrafts, setMilestoneDrafts] = useState<DeliveryDraft[]>([
+        { title: 'Kickoff and supplier confirmation', description: '', amount: '' },
+        { title: 'Delivery evidence checkpoint', description: '', amount: '' },
+        { title: 'Final acceptance', description: '', amount: '' },
+    ]);
+    const [milestoneBusy, setMilestoneBusy] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
         const load = async () => {
             try {
-                const [rfqResponse, bidsResponse, blockHeight] = await Promise.all([
+                const [rfqResponse, bidsResponse, milestonesResponse, blockHeight] = await Promise.all([
                     authenticatedFetch(`/api/rfq/${params.id}`),
                     authenticatedFetch(`/api/rfq/${params.id}/bids`),
+                    authenticatedFetch(`/api/escrow/${params.id}/milestones`),
                     fetchCurrentBlockHeight(),
                 ]);
                 const rfqPayload = await rfqResponse.json();
                 const bidsPayload = await bidsResponse.json().catch(() => ({ data: [] }));
+                const milestonesPayload = await milestonesResponse.json().catch(() => ({ data: { milestones: [], summary: null } }));
 
                 if (!rfqResponse.ok) {
                     throw new Error(rfqPayload?.error?.message || 'Failed to load RFQ.');
@@ -137,6 +159,8 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                 if (!cancelled) {
                     setRfq(rfqPayload.data);
                     setBids(bidsPayload.data || []);
+                    setMilestones(milestonesPayload?.data?.milestones || []);
+                    setDeliverySummary(milestonesPayload?.data?.summary || null);
                     setCurrentBlock(blockHeight);
                     setFundAmount(rfqPayload.data.winningBidAmount || '');
                 }
@@ -154,6 +178,17 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
             window.clearInterval(intervalId);
         };
     }, [params.id]);
+
+    useEffect(() => {
+        if (milestones.length === 0) return;
+        setMilestoneDrafts(
+            milestones.map((milestone) => ({
+                title: milestone.title,
+                description: milestone.description || '',
+                amount: milestone.targetAmount,
+            })),
+        );
+    }, [milestones]);
 
     const selectWinner = async (winningBidId: string) => {
         if (!rfq || actionBusy) return;
@@ -277,6 +312,50 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
         }
     };
 
+    const updateMilestoneDraft = (index: number, key: keyof DeliveryDraft, value: string) => {
+        setMilestoneDrafts((current) => current.map((draft, draftIndex) => (draftIndex === index ? { ...draft, [key]: value } : draft)));
+    };
+
+    const addMilestoneDraft = () => {
+        setMilestoneDrafts((current) => [...current, emptyMilestoneDraft()]);
+    };
+
+    const removeMilestoneDraft = (index: number) => {
+        setMilestoneDrafts((current) => current.filter((_, draftIndex) => draftIndex !== index));
+    };
+
+    const saveDeliveryPlan = async () => {
+        if (!rfq || milestoneBusy) return;
+        setMilestoneBusy(true);
+        setError(null);
+        try {
+            const payload = milestoneDrafts
+                .map((draft) => ({
+                    title: draft.title.trim(),
+                    description: draft.description.trim(),
+                    amount: draft.amount.trim(),
+                }))
+                .filter((draft) => draft.title && draft.amount);
+
+            const response = await authenticatedFetch(`/api/escrow/${encodeURIComponent(rfq.id)}/milestones`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ milestones: payload }),
+            });
+            const json = await response.json();
+            if (!response.ok) {
+                throw new Error(json?.error?.message || 'Failed to save delivery plan.');
+            }
+
+            setMilestones(json.data.milestones || []);
+            setDeliverySummary(json.data.summary || null);
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to save delivery plan.');
+        } finally {
+            setMilestoneBusy(false);
+        }
+    };
+
     if (loading) {
         return (
             <PageShell>
@@ -326,6 +405,13 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
         bidCount === 0;
     const canFundEscrow = rfq.status === 'WINNER_SELECTED' && rfq.winnerAccepted && Boolean(rfq.winningBidAmount);
     const winningBidProfile = bids.find((bid) => bid.isWinner)?.vendorProfile ?? null;
+    const canManageDeliveryPlan =
+        Boolean(rfq.winningBidAmount) &&
+        ['WINNER_SELECTED', 'ESCROW_FUNDED', 'COMPLETED'].includes(rfq.status);
+    const deliveryPlanLocked = deliverySummary ? !deliverySummary.planEditable : false;
+    const plannedMilestoneTotal = deliverySummary?.totalPlanned ? BigInt(deliverySummary.totalPlanned) : 0n;
+    const winningAmountValue = rfq.winningBidAmount ? BigInt(rfq.winningBidAmount) : 0n;
+    const unplannedCoverage = winningAmountValue > plannedMilestoneTotal ? winningAmountValue - plannedMilestoneTotal : 0n;
     const auctionLabel = pricingLabel(rfq.pricingMode);
     const auctionWorkspaceHref =
         rfq.pricingMode === PRICING_MODE.VICKREY
@@ -529,6 +615,90 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                                 <InfoRow label="Settlement" value={rfq.paid ? 'Private payment recorded' : 'No private payment yet'} />
                             </InfoList>
                         )}
+                    </Panel>
+
+                    <Panel
+                        title="Delivery assurance"
+                        subtitle="Define milestone checkpoints before payment release, then use the escrow workspace to approve evidence and release milestone amounts safely."
+                    >
+                        <DataGrid columns={4}>
+                            <DataPoint label="Milestones" value={deliverySummary?.milestoneCount ?? 0} />
+                            <DataPoint label="Approved" value={deliverySummary?.approvedCount ?? 0} />
+                            <DataPoint label="Released" value={deliverySummary?.releasedCount ?? 0} />
+                            <DataPoint label="Coverage" value={deliverySummary ? `${deliverySummary.coverageRate}%` : '0%'} />
+                        </DataGrid>
+
+                        {deliverySummary && deliverySummary.nextActionMilestoneTitle ? (
+                            <div className="mt-4">
+                                <Notice title="Next milestone action">
+                                    {deliverySummary.nextActionMilestoneTitle}
+                                </Notice>
+                            </div>
+                        ) : null}
+
+                        {milestones.length > 0 ? (
+                            <div className="mt-4 space-y-3">
+                                {milestones.map((milestone) => (
+                                    <DeliveryMilestoneCard key={milestone.id} milestone={milestone} tokenType={rfq.tokenType} />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="mt-4 text-sm text-[hsl(var(--muted-foreground))]">
+                                No milestone plan recorded yet. Set one up after winner selection so escrow releases can follow real delivery checkpoints.
+                            </div>
+                        )}
+
+                        {canManageDeliveryPlan ? (
+                            <div className="mt-5 space-y-4 rounded-xl border border-white/12 bg-white/[0.03] p-4">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-semibold text-white">Plan milestones</div>
+                                        <div className="text-xs leading-5 text-white/55">
+                                            Amounts must be valid integer release percentages of the remaining escrow.
+                                        </div>
+                                    </div>
+                                    <ActionBar>
+                                        <Button size="sm" variant="secondary" onClick={addMilestoneDraft} disabled={deliveryPlanLocked}>
+                                            Add milestone
+                                        </Button>
+                                        <Button size="sm" onClick={saveDeliveryPlan} isLoading={milestoneBusy} disabled={deliveryPlanLocked}>
+                                            Save plan
+                                        </Button>
+                                    </ActionBar>
+                                </div>
+                                {deliveryPlanLocked ? (
+                                    <Notice tone="warning" title="Plan locked">
+                                        Evidence review or milestone release has already started. The delivery plan is now fixed for audit integrity.
+                                    </Notice>
+                                ) : null}
+                                {milestoneDrafts.map((draft, index) => (
+                                    <div key={`milestone-draft-${index}`} className="grid gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-4 lg:grid-cols-[1.2fr_1fr_0.9fr_auto]">
+                                        <Field label="Title">
+                                            <TextInput value={draft.title} onChange={(event) => updateMilestoneDraft(index, 'title', event.target.value)} placeholder="Delivery checkpoint" disabled={deliveryPlanLocked} />
+                                        </Field>
+                                        <Field label="Description">
+                                            <TextInput value={draft.description} onChange={(event) => updateMilestoneDraft(index, 'description', event.target.value)} placeholder="What the vendor must deliver" disabled={deliveryPlanLocked} />
+                                        </Field>
+                                        <Field label="Amount" hint="Raw micro-units">
+                                            <TextInput value={draft.amount} onChange={(event) => updateMilestoneDraft(index, 'amount', event.target.value)} placeholder="25000000" disabled={deliveryPlanLocked} />
+                                        </Field>
+                                        <div className="flex items-end">
+                                            <Button size="sm" variant="danger" onClick={() => removeMilestoneDraft(index)} disabled={deliveryPlanLocked || milestoneDrafts.length === 1}>
+                                                Remove
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div className="grid gap-3 md:grid-cols-2">
+                                    <Notice title="Coverage">
+                                        Planned total: {formatAmount(plannedMilestoneTotal.toString(), rfq.tokenType)}. Unplanned remainder: {formatAmount(unplannedCoverage.toString(), rfq.tokenType)}.
+                                    </Notice>
+                                    <Notice tone="warning" title="Operational rule">
+                                        Once evidence review or milestone releases begin, the delivery plan becomes locked to preserve audit integrity.
+                                    </Notice>
+                                </div>
+                            </div>
+                        ) : null}
                     </Panel>
 
                     <Panel title="Bids">

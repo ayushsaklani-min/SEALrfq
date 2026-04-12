@@ -40,6 +40,7 @@ SEALrfq wins if the submission makes these points obvious:
 - expose buyer and vendor trust signals
 - add a buyer-side decision console
 - add vendor-side opportunity intelligence
+- add milestone-based delivery assurance around escrow
 - make the demo flow linear for judges
 
 ## P1: Procurement Trust Layer
@@ -48,6 +49,7 @@ SEALrfq wins if the submission makes these points obvious:
 - vendor reveal discipline and win-rate tracking
 - protocol composition metrics: direct RFQs vs auction-linked RFQs, stablecoin usage, audit coverage
 - procurement packet export from the audit workflow
+- delivery evidence and buyer approval checkpoints before release
 
 ## P2: Integrator and Operator Readiness
 
@@ -76,8 +78,9 @@ The live demo should tell this story:
 1. Buyer creates a sealed RFQ on testnet.
 2. Vendor commits privately and later reveals.
 3. Buyer selects or imports a winner, then funds escrow.
-4. Buyer either releases publicly in milestones or pays privately through the invoice path.
-5. Judge opens the audit trail and insights pages to verify the workflow, supplier recommendation, and trust signals.
+4. Buyer defines milestone checkpoints; vendor submits delivery evidence; buyer approves releases.
+5. Buyer either releases publicly by milestone or pays privately through the invoice path.
+6. Judge opens the audit trail and insights pages to verify the workflow, supplier recommendation, trust signals, and delivery checkpoints.
 
 ## Acceptance Criteria
 
@@ -85,4 +88,5 @@ The live demo should tell this story:
 - A judge can see live telemetry proving the protocol is coherent as a product, not just a contract set.
 - A buyer can justify supplier selection with indexed decision evidence.
 - A vendor can assess buyer quality before committing a sealed bid.
+- A buyer can prove why each escrow release happened and what delivery evidence supported it.
 - All written materials are explicit that the scope is testnet only.

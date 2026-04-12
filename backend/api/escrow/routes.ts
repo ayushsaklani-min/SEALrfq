@@ -22,6 +22,15 @@ import {
     tokenSymbol,
 } from '../../lib/sealProtocol';
 import { getBuyerProfiles, getVendorProfiles } from '../../lib/counterpartyProfile';
+import {
+    DELIVERY_MILESTONE_STATUS,
+    DeliveryEvidenceSchema,
+    DeliveryPlanSchema,
+    DeliveryReviewSchema,
+    serializeDeliveryMilestone,
+    summarizeDeliveryMilestones,
+    validateMilestoneReleaseSchedule,
+} from '../../lib/deliveryAssurance';
 
 const prisma = new PrismaClient();
 const tracker = new TransactionTracker(prisma);
@@ -30,6 +39,7 @@ const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 const ReleasePartialSchema = z.object({
     amount: z.string().regex(/^\d+$/).transform((value) => BigInt(value)),
+    milestoneId: z.string().uuid().optional(),
     txHash: z.string().optional(),
 });
 
@@ -103,7 +113,7 @@ function creatorReclaimTransition(tokenType: number) {
 }
 
 async function loadEscrowState(rfqId: string) {
-    const [rfq, escrow, chain, platform, payments, currentBlock, winningBid] = await Promise.all([
+    const [rfq, escrow, chain, platform, payments, currentBlock, winningBid, milestones] = await Promise.all([
         prisma.rFQ.findUnique({ where: { id: rfqId } }),
         prisma.escrow.findUnique({ where: { rfqId } }),
         getRfqChainState(rfqId),
@@ -114,6 +124,7 @@ async function loadEscrowState(rfqId: string) {
             where: { rfqId, isWinner: true },
             select: { vendor: true, revealedAmount: true, revealedBlock: true },
         }),
+        prisma.deliveryMilestone.findMany({ where: { rfqId }, orderBy: { sequence: 'asc' } }),
     ]);
 
     const releasedAmount = payments.reduce((total, payment) => total + payment.amount, BigInt(0));
@@ -141,6 +152,7 @@ async function loadEscrowState(rfqId: string) {
         chain: effectiveChain,
         platform,
         payments,
+        milestones,
         releasedAmount,
         winningAmount: winningAmount ? BigInt(winningAmount) : (winningBid?.revealedAmount ?? escrow?.totalAmount ?? BigInt(0)),
         currentBlock,
@@ -168,6 +180,7 @@ export async function handleGetEscrow(request: NextRequest, rfqId: string) {
     const remainingAmount = state.escrow.totalAmount - state.releasedAmount;
     const recoveryBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_RECOVERY_BLOCKS;
     const timeoutBlock = (state.chain.lifecycleBlock ?? 0) + TIMING.ESCROW_TIMEOUT_BLOCKS;
+    const deliverySummary = summarizeDeliveryMilestones(state.milestones, state.winningAmount);
 
     return NextResponse.json({
         status: 'success',
@@ -181,8 +194,10 @@ export async function handleGetEscrow(request: NextRequest, rfqId: string) {
             totalAmount: state.escrow.totalAmount.toString(),
             releasedAmount: state.releasedAmount.toString(),
             remainingAmount: remainingAmount.toString(),
-            milestoneCount: state.payments.length,
+            milestoneCount: state.milestones.length,
             payments: state.payments.map(serializePayment),
+            milestones: state.milestones.map(serializeDeliveryMilestone),
+            deliverySummary,
             lifecycleBlock: state.chain.lifecycleBlock,
             currentBlock: state.currentBlock,
             recoveryBlock,
@@ -210,6 +225,166 @@ export async function handleGetEscrow(request: NextRequest, rfqId: string) {
     });
 }
 
+export async function handleGetDeliveryMilestones(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'VENDOR', 'AUDITOR', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    const state = await loadEscrowState(rfqId);
+    if (!state.rfq) {
+        return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'RFQ not found' } }, { status: 404 });
+    }
+
+    return NextResponse.json({
+        status: 'success',
+        data: {
+            rfqId,
+            winner: state.chain.winner,
+            creator: state.chain.creator ?? state.rfq.buyer,
+            winningAmount: state.winningAmount.toString(),
+            milestones: state.milestones.map(serializeDeliveryMilestone),
+            summary: summarizeDeliveryMilestones(state.milestones, state.winningAmount),
+        },
+    });
+}
+
+export async function handleUpsertDeliveryMilestones(request: NextRequest, rfqId: string) {
+    const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    try {
+        const data = DeliveryPlanSchema.parse(await request.json());
+        const state = await loadEscrowState(rfqId);
+
+        if (!state.rfq || state.rfq.buyer !== auth.walletAddress) {
+            return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the buyer can manage the delivery plan.' } }, { status: 403 });
+        }
+
+        if (!state.chain.winner || state.winningAmount <= 0n) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Create the delivery plan after a winner and winning amount exist.' } }, { status: 412 });
+        }
+
+        if (state.milestones.some((milestone) => milestone.status !== DELIVERY_MILESTONE_STATUS.PLANNED && milestone.status !== DELIVERY_MILESTONE_STATUS.REJECTED)) {
+            return NextResponse.json({ status: 'error', error: { code: 'PLAN_LOCKED', message: 'The delivery plan cannot be replaced after evidence review or release has started.' } }, { status: 409 });
+        }
+
+        const totalPlanned = data.milestones.reduce((sum, milestone) => sum + milestone.amount, 0n);
+        if (totalPlanned > state.winningAmount) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_PLAN', message: 'Planned milestone total cannot exceed the winning amount.' } }, { status: 400 });
+        }
+
+        const scheduleError = validateMilestoneReleaseSchedule(
+            data.milestones.map((milestone) => milestone.amount),
+            state.winningAmount,
+        );
+        if (scheduleError) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_PLAN', message: scheduleError } }, { status: 400 });
+        }
+
+        await prisma.$transaction([
+            prisma.deliveryMilestone.deleteMany({ where: { rfqId } }),
+            prisma.deliveryMilestone.createMany({
+                data: data.milestones.map((milestone, index) => ({
+                    rfqId,
+                    sequence: index + 1,
+                    title: milestone.title,
+                    description: milestone.description || null,
+                    targetAmount: milestone.amount,
+                    status: DELIVERY_MILESTONE_STATUS.PLANNED,
+                })),
+            }),
+        ]);
+
+        const milestones = await prisma.deliveryMilestone.findMany({ where: { rfqId }, orderBy: { sequence: 'asc' } });
+        return NextResponse.json({
+            status: 'success',
+            data: {
+                rfqId,
+                milestones: milestones.map(serializeDeliveryMilestone),
+                summary: summarizeDeliveryMilestones(milestones, state.winningAmount),
+            },
+        });
+    } catch (error: any) {
+        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+    }
+}
+
+export async function handleSubmitDeliveryEvidence(request: NextRequest, rfqId: string, milestoneId: string) {
+    const auth = await requireRole(request, ['VENDOR', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    try {
+        const data = DeliveryEvidenceSchema.parse(await request.json());
+        const state = await loadEscrowState(rfqId);
+        const milestone = state.milestones.find((item) => item.id === milestoneId);
+
+        if (!state.rfq || !milestone) {
+            return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Milestone not found.' } }, { status: 404 });
+        }
+        if (state.chain.winner !== auth.walletAddress) {
+            return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the winning vendor can submit delivery evidence.' } }, { status: 403 });
+        }
+        if (milestone.status === DELIVERY_MILESTONE_STATUS.APPROVED || milestone.status === DELIVERY_MILESTONE_STATUS.RELEASED) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Evidence is already approved or released for this milestone.' } }, { status: 409 });
+        }
+
+        const updated = await prisma.deliveryMilestone.update({
+            where: { id: milestoneId },
+            data: {
+                status: DELIVERY_MILESTONE_STATUS.SUBMITTED,
+                evidenceHash: data.evidenceHash,
+                evidenceUrl: data.evidenceUrl || null,
+                evidenceNote: data.note || null,
+                evidenceSubmittedBy: auth.walletAddress,
+                evidenceSubmittedAt: new Date(),
+                reviewedBy: null,
+                reviewedAt: null,
+                reviewNote: null,
+                rejectionReason: null,
+            },
+        });
+
+        return NextResponse.json({ status: 'success', data: { milestone: serializeDeliveryMilestone(updated) } });
+    } catch (error: any) {
+        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+    }
+}
+
+export async function handleReviewDeliveryEvidence(request: NextRequest, rfqId: string, milestoneId: string) {
+    const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
+    if (auth instanceof NextResponse) return auth;
+
+    try {
+        const data = DeliveryReviewSchema.parse(await request.json());
+        const state = await loadEscrowState(rfqId);
+        const milestone = state.milestones.find((item) => item.id === milestoneId);
+
+        if (!state.rfq || !milestone) {
+            return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Milestone not found.' } }, { status: 404 });
+        }
+        if (state.rfq.buyer !== auth.walletAddress) {
+            return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the buyer can review milestone evidence.' } }, { status: 403 });
+        }
+        if (milestone.status !== DELIVERY_MILESTONE_STATUS.SUBMITTED) {
+            return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Milestone evidence must be submitted before review.' } }, { status: 409 });
+        }
+
+        const updated = await prisma.deliveryMilestone.update({
+            where: { id: milestoneId },
+            data: {
+                status: data.approve ? DELIVERY_MILESTONE_STATUS.APPROVED : DELIVERY_MILESTONE_STATUS.REJECTED,
+                reviewedBy: auth.walletAddress,
+                reviewedAt: new Date(),
+                reviewNote: data.note || null,
+                rejectionReason: data.approve ? null : data.rejectionReason || null,
+            },
+        });
+
+        return NextResponse.json({ status: 'success', data: { milestone: serializeDeliveryMilestone(updated) } });
+    } catch (error: any) {
+        return NextResponse.json({ status: 'error', error: { code: 'VALIDATION_ERROR', message: error.message } }, { status: 400 });
+    }
+}
+
 export async function handleReleasePartialPayment(request: NextRequest, rfqId: string) {
     const auth = await requireRole(request, ['BUYER', 'NEW_USER']);
     if (auth instanceof NextResponse) return auth;
@@ -217,6 +392,7 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
     try {
         const data = ReleasePartialSchema.parse(await request.json());
         const state = await loadEscrowState(rfqId);
+        const milestone = data.milestoneId ? state.milestones.find((item) => item.id === data.milestoneId) : null;
         if (!state.rfq || !state.escrow || state.rfq.buyer !== auth.walletAddress) {
             return NextResponse.json({ status: 'error', error: { code: 'FORBIDDEN', message: 'Only the creator can release escrow.' } }, { status: 403 });
         }
@@ -230,6 +406,17 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
             }
             if (data.amount <= 0n || data.amount > remaining) {
                 return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: `Amount must be between 1 and ${remaining}.` } }, { status: 400 });
+            }
+            if (data.milestoneId) {
+                if (!milestone) {
+                    return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Selected milestone does not exist.' } }, { status: 404 });
+                }
+                if (milestone.status !== DELIVERY_MILESTONE_STATUS.APPROVED || milestone.releaseTxId) {
+                    return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Only approved, unreleased milestones can drive a release.' } }, { status: 409 });
+                }
+                if (milestone.targetAmount !== data.amount) {
+                    return NextResponse.json({ status: 'error', error: { code: 'INVALID_AMOUNT', message: 'Release amount must match the approved milestone amount exactly.' } }, { status: 400 });
+                }
             }
             const scaled = data.amount * 100n;
             if (scaled % remaining !== 0n) {
@@ -272,6 +459,14 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
         if (existingPayment) {
             return NextResponse.json({ status: 'success', data: { txHash: data.txHash } });
         }
+        if (data.milestoneId) {
+            if (!milestone) {
+                return NextResponse.json({ status: 'error', error: { code: 'NOT_FOUND', message: 'Selected milestone does not exist.' } }, { status: 404 });
+            }
+            if (milestone.releaseTxId) {
+                return NextResponse.json({ status: 'error', error: { code: 'INVALID_STATE', message: 'Milestone is already linked to a release.' } }, { status: 409 });
+            }
+        }
 
         const boundedNewTotalRaw = state.releasedAmount + data.amount;
         const boundedNewTotal =
@@ -290,6 +485,18 @@ export async function handleReleasePartialPayment(request: NextRequest, rfqId: s
                     releasedEventIdx: 0,
                 },
             }),
+            ...(data.milestoneId
+                ? [
+                      prisma.deliveryMilestone.update({
+                          where: { id: data.milestoneId },
+                          data: {
+                              status: DELIVERY_MILESTONE_STATUS.RELEASED,
+                              releaseTxId: data.txHash,
+                              reviewedAt: new Date(),
+                          },
+                      }),
+                  ]
+                : []),
             prisma.escrow.update({
                 where: { rfqId },
                 data: { releasedAmount: boundedNewTotal, isFinal },

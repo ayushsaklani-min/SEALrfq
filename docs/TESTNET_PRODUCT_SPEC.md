@@ -115,6 +115,34 @@ Give judges and operators an exportable procurement evidence bundle from the liv
 - the packet includes both timeline evidence and decision context
 - no product docs pages are required inside the app
 
+## Feature 5: Delivery Assurance
+
+### Goal
+
+Turn escrow into a procurement delivery workflow instead of a raw payment form.
+
+### Surfaces
+
+- `/buyer/rfqs/[id]`
+- `/escrow/[rfqId]`
+- `/audit/[rfqId]`
+
+### Required data
+
+- milestone title and amount
+- milestone approval state
+- vendor evidence hash and link
+- buyer approval notes or rejection reason
+- milestone-linked release transaction
+
+### Acceptance
+
+- buyers can define a milestone plan after winner selection
+- winners can submit delivery evidence per milestone
+- buyers can approve or reject evidence before public release
+- approved milestones can drive exact release amounts from escrow
+- audit export includes delivery checkpoint state
+
 ## Non-Goals
 
 - mainnet governance

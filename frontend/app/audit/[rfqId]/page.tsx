@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { CounterpartyProfileCard, type BuyerProfileSummary, type VendorProfileSummary } from '@/components/CounterpartyProfileCard';
+import { DeliveryMilestoneCard } from '@/components/DeliveryMilestoneCard';
 import { Button } from '@/components/ui/Button';
 import {
     ActionBar,
@@ -17,6 +18,7 @@ import {
     SelectInput,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
+import { type DeliveryMilestone, type DeliverySummary } from '@/lib/deliveryAssurance';
 import { analyzeWinnerSelection, buildProcurementPacketMarkdown } from '@/lib/procurementIntelligence';
 import { formatAmount, pricingLabel, STATUS_LABELS, tokenLabel } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
@@ -60,6 +62,11 @@ type AuditBid = {
     vendorProfile?: VendorProfileSummary | null;
 };
 
+type AuditMilestonePayload = {
+    milestones: DeliveryMilestone[];
+    summary: DeliverySummary;
+};
+
 function short(value?: string, n = 12): string {
     if (!value) return '-';
     if (value.length <= n) return value;
@@ -90,6 +97,7 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
     const [events, setEvents] = useState<AuditEvent[]>([]);
     const [rfq, setRfq] = useState<AuditRfqDetail | null>(null);
     const [bids, setBids] = useState<AuditBid[]>([]);
+    const [milestonePayload, setMilestonePayload] = useState<AuditMilestonePayload | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [filterEventType, setFilterEventType] = useState<string>('ALL');
@@ -126,12 +134,14 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
 
         const fetchPacketData = async () => {
             try {
-                const [rfqResponse, bidsResponse] = await Promise.all([
+                const [rfqResponse, bidsResponse, milestonesResponse] = await Promise.all([
                     authenticatedFetch(`/api/rfq/${rfqId}`),
                     authenticatedFetch(`/api/rfq/${rfqId}/bids`),
+                    authenticatedFetch(`/api/escrow/${rfqId}/milestones`),
                 ]);
                 const rfqJson = await rfqResponse.json();
                 const bidsJson = await bidsResponse.json().catch(() => ({ data: [] }));
+                const milestonesJson = await milestonesResponse.json().catch(() => ({ data: { milestones: [], summary: null } }));
 
                 if (!rfqResponse.ok) {
                     throw new Error(rfqJson?.error?.message || 'Failed to fetch RFQ packet context');
@@ -140,6 +150,7 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                 if (!cancelled) {
                     setRfq(rfqJson.data || null);
                     setBids(bidsJson.data || []);
+                    setMilestonePayload(milestonesJson.data || null);
                 }
             } catch (err: any) {
                 if (!cancelled) {
@@ -176,7 +187,7 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
 
     const exportPacket = () => {
         if (!rfq) return;
-        const markdown = buildProcurementPacketMarkdown({ rfq, events, decision });
+        const markdown = buildProcurementPacketMarkdown({ rfq, events, milestones: milestonePayload?.milestones || [], decision });
         const blob = new Blob([markdown], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -264,6 +275,25 @@ export default function AuditTrailPage({ params }: { params: { rfqId?: string } 
                             </div>
                         </div>
                     </div>
+                    {milestonePayload ? (
+                        <div className="mt-4 space-y-3">
+                            <DataGrid columns={4}>
+                                <DataPoint label="Milestones" value={milestonePayload.summary?.milestoneCount ?? 0} />
+                                <DataPoint label="Submitted" value={milestonePayload.summary?.submittedCount ?? 0} />
+                                <DataPoint label="Approved" value={milestonePayload.summary?.approvedCount ?? 0} />
+                                <DataPoint label="Released" value={milestonePayload.summary?.releasedCount ?? 0} />
+                            </DataGrid>
+                            {milestonePayload.milestones.length ? (
+                                <div className="space-y-3">
+                                    {milestonePayload.milestones.map((milestone) => (
+                                        <DeliveryMilestoneCard key={milestone.id} milestone={milestone} tokenType={rfq.tokenType} />
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-sm text-white/55">No delivery milestones were configured for this RFQ.</div>
+                            )}
+                        </div>
+                    ) : null}
                 </Panel>
             ) : null}
 
