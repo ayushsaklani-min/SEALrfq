@@ -152,9 +152,3 @@ Platform admins can configure the protocol via the built-in admin dashboard:
 **GitHub**: https://github.com/ayushsaklani-min/SEALrfq
 
 ---
-
-## Buildathon Docs
-
-- `docs/BUILDATHON_UPGRADE_PLAN.md` — testnet upgrade plan and competitive positioning
-- `docs/TESTNET_PRODUCT_SPEC.md` — scope, surfaces, and acceptance criteria for the current buildathon pass
-- `docs/DELIVERY_CHECKLIST.md` — delivery checklist and immediate follow-up items
